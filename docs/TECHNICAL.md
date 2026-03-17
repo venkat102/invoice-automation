@@ -500,9 +500,20 @@ When Stage 5 (LLM) is invoked:
 
 ## Embedding System
 
+**No external vector database is used.** The system uses a custom in-memory NumPy index backed by a Frappe DocType (MariaDB table):
+
+| Component | Implementation |
+|-----------|---------------|
+| **Embedding model** | `sentence-transformers/all-MiniLM-L6-v2` — 384 dimensions, L2-normalized |
+| **Vector storage** | `Embedding Index` DocType — each record stores a JSON array of 384 floats in MariaDB |
+| **Search engine** | `NumpyVectorIndex` — loads all vectors into a NumPy matrix in RAM, cosine similarity via dot product (O(n) full scan) |
+| **Similarity method** | Cosine similarity = dot product (vectors are L2-normalized at generation time via `normalize_embeddings=True`) |
+
+**Limitations:** All vectors must fit in worker process RAM. Search is O(n) against every stored vector. Suitable for up to ~50K entries. For larger catalogs, swap to Qdrant — see [Extension Guide](#swapping-embedding-backend-numpy--qdrant).
+
 ### Model (`model.py`)
 
-- Uses `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions)
+- Uses `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions, L2-normalized)
 - **Lazy-loaded** — only in worker processes, never in web server
 - Model name configurable via `embedding_model_name` setting
 - Functions: `generate_embedding(text)`, `generate_embeddings_batch(texts)`, `embedding_to_list()`, `list_to_embedding()`
@@ -515,13 +526,14 @@ Abstract `VectorIndexBase` interface with methods:
 - `remove(source_doctype, source_name)`
 - `rebuild()`
 
-**`NumpyVectorIndex`** implementation:
-- Loads all embeddings from `Embedding Index` doctype into a NumPy matrix on first use
-- `search()`: cosine similarity via matrix dot product (embeddings are pre-normalized), apply filters, return top-k
-- `upsert()`: updates both DB record and in-memory matrix
+**`NumpyVectorIndex`** implementation (current default — no external vector DB needed):
+- **Storage:** `Embedding Index` DocType in MariaDB (JSON-serialized float arrays)
+- **In-memory index:** Loads all embeddings into a single NumPy matrix on first use
+- `search()`: cosine similarity via matrix dot product (`embeddings @ query.T`), apply metadata filters, return top-k
+- `upsert()`: updates both the DB record and the in-memory matrix
 - `remove()`: deletes from both
 - Thread-safe via `threading.Lock`
-- Singleton via `get_index_manager()`
+- Singleton per worker process via `get_index_manager()`
 
 ### Index Builder (`index_builder.py`)
 

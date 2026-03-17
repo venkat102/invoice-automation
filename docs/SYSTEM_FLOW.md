@@ -115,6 +115,9 @@ File Upload → Type Detection → Format Routing → Parsing → LLM Extraction
 - Score <60 → no match
 
 ### Stage 4: Embedding-Based Semantic Search (~10-50ms)
+- Uses `sentence-transformers/all-MiniLM-L6-v2` (384-dim, L2-normalized)
+- In-memory NumPy index (no external vector DB) backed by `Embedding Index` DocType
+- Cosine similarity via dot product — O(n) scan against all stored vectors
 - Historical Invoice Index (human-corrected entries weighted 1.1x)
 - Item Master Index (name + description + brand + HSN)
 - Both agree on same item → +10% confidence boost
