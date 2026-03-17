@@ -157,7 +157,7 @@ flowchart LR
 
 | Doctype | Purpose | Fed By | Feeds Into |
 |---------|---------|--------|------------|
-| Invoice Automation Settings | System-wide configuration | Admin | All modules |
+| Invoice Automation Settings | Single source of truth for all configuration (API keys, thresholds, file handling, etc.) | Admin | All modules |
 | Invoice Processing Queue | Pipeline tracking per invoice | File upload / API | Purchase Invoice |
 | Invoice Line Item Match | Per-line match results | Matching Pipeline | Review UI, PI creation |
 | Mapping Alias | Learned mappings | Human corrections | Stage 2 lookups |

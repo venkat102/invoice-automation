@@ -2,8 +2,6 @@
 
 import json
 
-import frappe
-
 from invoice_automation.matching.confidence import get_config
 from invoice_automation.matching.exact_matcher import MatchResult
 
@@ -31,12 +29,9 @@ class LLMMatcher:
 				details={"reason": "LLM matching disabled"},
 			)
 
-		api_key = None
-		try:
-			api_key = frappe.db.get_single_value("Invoice Automation Settings", "anthropic_api_key")
-		except Exception:
-			pass
-		api_key = api_key or frappe.conf.get("anthropic_api_key")
+		from invoice_automation.utils.helpers import get_config_value
+
+		api_key = get_config_value("anthropic_api_key")
 		if not api_key:
 			return MatchResult(
 				matched=False, doctype=source_doctype, stage="LLM",

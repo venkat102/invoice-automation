@@ -12,14 +12,10 @@ def get_model():
 	"""Lazy-load the sentence-transformer model. Only call from worker processes."""
 	global _model, _model_name
 
-	model_name = None
-	for doctype in ("Invoice Automation Settings", "Invoice Matching Config"):
-		try:
-			model_name = frappe.db.get_single_value(doctype, "embedding_model_name")
-			if model_name:
-				break
-		except Exception:
-			continue
+	try:
+		model_name = frappe.db.get_single_value("Invoice Automation Settings", "embedding_model_name")
+	except Exception:
+		model_name = None
 	model_name = model_name or "sentence-transformers/all-MiniLM-L6-v2"
 
 	if _model is None or _model_name != model_name:

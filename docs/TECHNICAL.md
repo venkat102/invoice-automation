@@ -84,7 +84,7 @@ invoice_automation/
 │   ├── exceptions.py              # InvoiceAutomationError hierarchy (12 exception classes)
 │   ├── file_utils.py              # compute_sha256, detect_mime_type, validate_file
 │   ├── decimal_utils.py           # to_decimal, safe_multiply, round_decimal (never float)
-│   └── helpers.py                 # get_config_value (reads new settings, falls back to old)
+│   └── helpers.py                 # get_config_value (reads from Invoice Automation Settings)
 └── hooks.py                       # doc_events, scheduler_events, after_install/migrate
 ```
 
@@ -114,12 +114,18 @@ cd frappe-bench
 ./env/bin/pip install -e apps/invoice_automation
 ```
 
-### Initial Configuration
+### Configuration
+
+All configuration is managed through a single DocType: **Invoice Automation Settings** (a Single document in the Frappe desk). There is no need for `.env` files or `site_config.json` overrides — every setting lives in this DocType.
+
 1. Navigate to **Invoice Automation Settings** in the desk
 2. Set `ollama_base_url` (default: `http://localhost:11434`)
 3. Set `ollama_model` (default: `qwen2.5vl:7b`)
 4. (Optional) Set `llamaparse_api_key` for PDF parsing
 5. (Optional) Set `anthropic_api_key` for Stage 5 LLM matching
+6. Review and adjust matching thresholds, file handling limits, and other settings as needed
+
+See [Configuration Reference](#configuration-reference) for the full field list.
 
 ### Build Indexes
 ```bash
@@ -398,7 +404,7 @@ Only invoked when Stages 1-4 all fail. Uses Claude Sonnet via Anthropic API.
 
 **Confidence capped at 88%** — LLM matches always require human review.
 
-Gated by `enable_llm_matching` setting. API key read from `anthropic_api_key` setting or `site_config.json`.
+Gated by `enable_llm_matching` setting. API key read from `anthropic_api_key` in Invoice Automation Settings.
 
 ### Confidence-Based Routing (`confidence.py`)
 
@@ -631,7 +637,9 @@ Vector storage for semantic search.
 
 ## Configuration Reference
 
-See [Invoice Automation Settings](#invoice-automation-settings-single) doctype. Full field list:
+All configuration is centralized in the **Invoice Automation Settings** DocType (Single document). No environment variables (`.env`) or `site_config.json` entries are needed — the DocType is the single source of truth for all settings.
+
+Full field list:
 
 ### Ollama
 | Field | Default | Description |
@@ -663,7 +671,7 @@ See [Invoice Automation Settings](#invoice-automation-settings-single) doctype. 
 ### Claude API
 | Field | Default | Description |
 |-------|---------|-------------|
-| `anthropic_api_key` | — | Password (or via site_config.json) |
+| `anthropic_api_key` | — | Password field |
 | `llm_max_candidates` | 10 | Max items sent to LLM |
 | `llm_max_corrections_context` | 5 | Max corrections in LLM prompt |
 
@@ -884,8 +892,8 @@ Every exception carries: `message` (human-readable), `code` (machine-readable), 
 | Supplier not matching | GSTIN/name not in Redis | `bench execute invoice_automation.utils.redis_index.rebuild_all` |
 | Items not matching | Normalization mismatch | Check `normalize_text()` output |
 | Embedding search empty | Index not built | `bench execute invoice_automation.embeddings.index_builder.build_full_index` |
-| LLM stage not firing | Disabled or no API key | Check `enable_llm_matching` + `anthropic_api_key` in settings |
-| LlamaParse failure | Invalid/missing API key | Check `llamaparse_api_key` in settings |
+| LLM stage not firing | Disabled or no API key | Check `enable_llm_matching` + `anthropic_api_key` in Invoice Automation Settings |
+| LlamaParse failure | Invalid/missing API key | Check `llamaparse_api_key` in Invoice Automation Settings |
 | DOC parsing fails | LibreOffice not installed | `apt install libreoffice` |
 | Password-protected PDF | Not supported | Clear error message returned |
 | Amount mismatch flagged | Line items don't sum to total | Review extracted amounts, check for missing lines |

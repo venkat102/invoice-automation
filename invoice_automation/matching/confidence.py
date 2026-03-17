@@ -23,20 +23,17 @@ DEFAULT_CONFIG = {
 
 
 def get_config() -> dict:
-	"""Read from Invoice Automation Settings (preferred), falling back to Invoice Matching Config."""
+	"""Read configuration from Invoice Automation Settings."""
 	config = dict(DEFAULT_CONFIG)
 
-	# Try new settings doctype first, then old one
-	for doctype in ("Invoice Automation Settings", "Invoice Matching Config"):
-		try:
-			doc = frappe.get_cached_doc(doctype)
-			for key in DEFAULT_CONFIG:
-				value = getattr(doc, key, None)
-				if value is not None:
-					config[key] = value
-			break  # Found a valid config, stop
-		except Exception:
-			continue
+	try:
+		doc = frappe.get_cached_doc("Invoice Automation Settings")
+		for key in DEFAULT_CONFIG:
+			value = getattr(doc, key, None)
+			if value is not None:
+				config[key] = value
+	except Exception:
+		pass
 
 	return config
 

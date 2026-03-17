@@ -6,15 +6,13 @@ import frappe
 
 
 def get_config_value(fieldname, default=None):
-	"""Read a value from Invoice Automation Settings (preferred) or Invoice Matching Config (fallback)."""
-	# Try new settings doctype first
-	for doctype in ("Invoice Automation Settings", "Invoice Matching Config"):
-		try:
-			value = frappe.db.get_single_value(doctype, fieldname)
-			if value is not None:
-				return value
-		except Exception:
-			continue
+	"""Read a value from Invoice Automation Settings."""
+	try:
+		value = frappe.db.get_single_value("Invoice Automation Settings", fieldname)
+		if value is not None:
+			return value
+	except Exception:
+		pass
 	return default
 
 
