@@ -1,0 +1,100 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2024-01-01 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "source_doctype",
+  "source_name",
+  "composite_text",
+  "column_break_meta",
+  "supplier_context",
+  "is_human_corrected",
+  "item_group",
+  "hsn_code",
+  "last_updated",
+  "section_break_vector",
+  "embedding_vector"
+ ],
+ "fields": [
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Source Doctype",
+   "options": "Item\nHistorical Invoice Line"
+  },
+  {
+   "fieldname": "source_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Source Name"
+  },
+  {
+   "fieldname": "composite_text",
+   "fieldtype": "Small Text",
+   "label": "Composite Text"
+  },
+  {
+   "fieldname": "column_break_meta",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "supplier_context",
+   "fieldtype": "Link",
+   "label": "Supplier Context",
+   "options": "Supplier"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_human_corrected",
+   "fieldtype": "Check",
+   "label": "Is Human Corrected"
+  },
+  {
+   "fieldname": "item_group",
+   "fieldtype": "Link",
+   "label": "Item Group",
+   "options": "Item Group"
+  },
+  {
+   "fieldname": "hsn_code",
+   "fieldtype": "Data",
+   "label": "HSN Code"
+  },
+  {
+   "fieldname": "last_updated",
+   "fieldtype": "Datetime",
+   "label": "Last Updated"
+  },
+  {
+   "fieldname": "section_break_vector",
+   "fieldtype": "Section Break",
+   "label": "Embedding"
+  },
+  {
+   "fieldname": "embedding_vector",
+   "fieldtype": "JSON",
+   "label": "Embedding Vector"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2024-01-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Invoice Automation",
+ "name": "Embedding Index",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

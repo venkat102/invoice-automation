@@ -1,0 +1,396 @@
+{
+ "actions": [],
+ "autoname": "INV-Q-.#####",
+ "creation": "2024-01-01 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "sb_file",
+  "source_file",
+  "file_name",
+  "file_hash",
+  "cb_file",
+  "file_type",
+  "file_size_bytes",
+  "sb_status",
+  "extraction_status",
+  "matching_status",
+  "workflow_state",
+  "cb_status",
+  "routing_decision",
+  "overall_confidence",
+  "processed_by",
+  "sb_extraction",
+  "extraction_method",
+  "document_type_detected",
+  "extraction_confidence",
+  "extraction_time_ms",
+  "cb_extraction",
+  "extraction_warnings",
+  "raw_parsed_text",
+  "sb_extraction_data",
+  "extracted_data",
+  "sb_matching_header",
+  "matched_supplier",
+  "supplier_match_confidence",
+  "supplier_match_stage",
+  "cb_match_header",
+  "matched_bill_no",
+  "matched_bill_date",
+  "matched_due_date",
+  "matched_currency",
+  "matched_total",
+  "matched_tax_template",
+  "matched_cost_center",
+  "sb_match_data",
+  "matched_data",
+  "cb_match_timing",
+  "matching_time_ms",
+  "sb_line_items",
+  "line_items",
+  "sb_validation",
+  "validation_results",
+  "amount_mismatch",
+  "amount_mismatch_details",
+  "cb_duplicate",
+  "duplicate_flag",
+  "duplicate_details",
+  "sb_output",
+  "purchase_invoice",
+  "cb_output",
+  "total_processing_time_ms",
+  "sb_error",
+  "processing_error"
+ ],
+ "fields": [
+  {
+   "fieldname": "sb_file",
+   "fieldtype": "Section Break",
+   "label": "File Information"
+  },
+  {
+   "fieldname": "source_file",
+   "fieldtype": "Attach",
+   "label": "Source File"
+  },
+  {
+   "fieldname": "file_name",
+   "fieldtype": "Data",
+   "label": "File Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "file_hash",
+   "fieldtype": "Data",
+   "label": "File Hash (SHA-256)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_file",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "file_type",
+   "fieldtype": "Select",
+   "label": "File Type",
+   "options": "\nPDF\nImage\nDOCX\nDOC\nUnknown",
+   "read_only": 1
+  },
+  {
+   "fieldname": "file_size_bytes",
+   "fieldtype": "Int",
+   "label": "File Size (bytes)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_status",
+   "fieldtype": "Section Break",
+   "label": "Status"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "extraction_status",
+   "fieldtype": "Select",
+   "label": "Extraction Status",
+   "options": "Pending\nProcessing\nCompleted\nFailed"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "matching_status",
+   "fieldtype": "Select",
+   "label": "Matching Status",
+   "options": "Pending\nProcessing\nCompleted\nFailed\nSkipped"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "workflow_state",
+   "fieldtype": "Select",
+   "label": "Workflow State",
+   "options": "Pending\nExtracting\nExtracted\nMatching\nMatched\nRouted\nUnder Review\nInvoice Created\nRejected\nFailed"
+  },
+  {
+   "fieldname": "cb_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "routing_decision",
+   "fieldtype": "Select",
+   "label": "Routing Decision",
+   "options": "\nAuto Create\nReview Queue\nManual Entry"
+  },
+  {
+   "fieldname": "overall_confidence",
+   "fieldtype": "Float",
+   "label": "Overall Confidence"
+  },
+  {
+   "fieldname": "processed_by",
+   "fieldtype": "Link",
+   "label": "Processed By",
+   "options": "User"
+  },
+  {
+   "fieldname": "sb_extraction",
+   "fieldtype": "Section Break",
+   "label": "Extraction Details"
+  },
+  {
+   "fieldname": "extraction_method",
+   "fieldtype": "Data",
+   "label": "Extraction Method",
+   "read_only": 1
+  },
+  {
+   "fieldname": "document_type_detected",
+   "fieldtype": "Data",
+   "label": "Document Type Detected",
+   "read_only": 1
+  },
+  {
+   "fieldname": "extraction_confidence",
+   "fieldtype": "Float",
+   "label": "Extraction Confidence",
+   "read_only": 1
+  },
+  {
+   "fieldname": "extraction_time_ms",
+   "fieldtype": "Int",
+   "label": "Extraction Time (ms)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_extraction",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "extraction_warnings",
+   "fieldtype": "JSON",
+   "label": "Extraction Warnings",
+   "read_only": 1
+  },
+  {
+   "fieldname": "raw_parsed_text",
+   "fieldtype": "Long Text",
+   "label": "Raw Parsed Text",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sb_extraction_data",
+   "fieldtype": "Section Break",
+   "label": "Extracted Data"
+  },
+  {
+   "fieldname": "extracted_data",
+   "fieldtype": "JSON",
+   "label": "Extracted Data"
+  },
+  {
+   "fieldname": "sb_matching_header",
+   "fieldtype": "Section Break",
+   "label": "Matched Header"
+  },
+  {
+   "fieldname": "matched_supplier",
+   "fieldtype": "Link",
+   "label": "Matched Supplier",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "supplier_match_confidence",
+   "fieldtype": "Float",
+   "label": "Supplier Match Confidence"
+  },
+  {
+   "fieldname": "supplier_match_stage",
+   "fieldtype": "Select",
+   "label": "Supplier Match Stage",
+   "options": "\nExact\nAlias\nFuzzy\nEmbedding\nLLM\nManual"
+  },
+  {
+   "fieldname": "cb_match_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "matched_bill_no",
+   "fieldtype": "Data",
+   "label": "Matched Bill No"
+  },
+  {
+   "fieldname": "matched_bill_date",
+   "fieldtype": "Date",
+   "label": "Matched Bill Date"
+  },
+  {
+   "fieldname": "matched_due_date",
+   "fieldtype": "Date",
+   "label": "Matched Due Date"
+  },
+  {
+   "fieldname": "matched_currency",
+   "fieldtype": "Link",
+   "label": "Matched Currency",
+   "options": "Currency"
+  },
+  {
+   "fieldname": "matched_total",
+   "fieldtype": "Currency",
+   "label": "Matched Total"
+  },
+  {
+   "fieldname": "matched_tax_template",
+   "fieldtype": "Link",
+   "label": "Matched Tax Template",
+   "options": "Purchase Taxes and Charges Template"
+  },
+  {
+   "fieldname": "matched_cost_center",
+   "fieldtype": "Link",
+   "label": "Matched Cost Center",
+   "options": "Cost Center"
+  },
+  {
+   "fieldname": "sb_match_data",
+   "fieldtype": "Section Break",
+   "label": "Match Data"
+  },
+  {
+   "fieldname": "matched_data",
+   "fieldtype": "JSON",
+   "label": "Matched Data"
+  },
+  {
+   "fieldname": "cb_match_timing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "matching_time_ms",
+   "fieldtype": "Int",
+   "label": "Matching Time (ms)"
+  },
+  {
+   "fieldname": "sb_line_items",
+   "fieldtype": "Section Break",
+   "label": "Line Items"
+  },
+  {
+   "fieldname": "line_items",
+   "fieldtype": "Table",
+   "label": "Line Items",
+   "options": "Invoice Line Item Match"
+  },
+  {
+   "fieldname": "sb_validation",
+   "fieldtype": "Section Break",
+   "label": "Validation"
+  },
+  {
+   "fieldname": "validation_results",
+   "fieldtype": "JSON",
+   "label": "Validation Results"
+  },
+  {
+   "fieldname": "amount_mismatch",
+   "fieldtype": "Check",
+   "label": "Amount Mismatch"
+  },
+  {
+   "fieldname": "amount_mismatch_details",
+   "fieldtype": "Small Text",
+   "label": "Amount Mismatch Details"
+  },
+  {
+   "fieldname": "cb_duplicate",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "duplicate_flag",
+   "fieldtype": "Check",
+   "label": "Duplicate Flag"
+  },
+  {
+   "fieldname": "duplicate_details",
+   "fieldtype": "Small Text",
+   "label": "Duplicate Details"
+  },
+  {
+   "fieldname": "sb_output",
+   "fieldtype": "Section Break",
+   "label": "Output"
+  },
+  {
+   "fieldname": "purchase_invoice",
+   "fieldtype": "Link",
+   "label": "Purchase Invoice",
+   "options": "Purchase Invoice"
+  },
+  {
+   "fieldname": "cb_output",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_processing_time_ms",
+   "fieldtype": "Int",
+   "label": "Total Processing Time (ms)"
+  },
+  {
+   "fieldname": "sb_error",
+   "fieldtype": "Section Break",
+   "label": "Errors"
+  },
+  {
+   "fieldname": "processing_error",
+   "fieldtype": "Small Text",
+   "label": "Processing Error"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2024-01-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Invoice Automation",
+ "name": "Invoice Processing Queue",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Accounts Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Accounts User",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "title_field": "name"
+}

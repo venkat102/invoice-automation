@@ -1,0 +1,152 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2024-01-01 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "source_doctype",
+  "raw_extracted_text",
+  "system_proposed",
+  "system_confidence",
+  "system_match_stage",
+  "column_break_correction",
+  "human_selected",
+  "reviewer",
+  "reviewer_reasoning",
+  "section_break_context",
+  "invoice_context",
+  "supplier",
+  "extracted_hsn",
+  "item_group_of_correction",
+  "column_break_embedding",
+  "raw_text_embedding",
+  "is_conflicting",
+  "conflicting_correction"
+ ],
+ "fields": [
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Source Doctype",
+   "options": "Supplier\nItem\nPurchase Taxes and Charges Template\nCost Center"
+  },
+  {
+   "fieldname": "raw_extracted_text",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Raw Extracted Text"
+  },
+  {
+   "fieldname": "system_proposed",
+   "fieldtype": "Dynamic Link",
+   "label": "System Proposed",
+   "options": "source_doctype"
+  },
+  {
+   "fieldname": "system_confidence",
+   "fieldtype": "Float",
+   "label": "System Confidence"
+  },
+  {
+   "fieldname": "system_match_stage",
+   "fieldtype": "Select",
+   "label": "System Match Stage",
+   "options": "\nExact\nAlias\nFuzzy\nEmbedding\nLLM\nManual"
+  },
+  {
+   "fieldname": "column_break_correction",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "human_selected",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Human Selected",
+   "options": "source_doctype"
+  },
+  {
+   "fieldname": "reviewer",
+   "fieldtype": "Link",
+   "label": "Reviewer",
+   "options": "User"
+  },
+  {
+   "fieldname": "reviewer_reasoning",
+   "fieldtype": "Small Text",
+   "label": "Reviewer Reasoning"
+  },
+  {
+   "fieldname": "section_break_context",
+   "fieldtype": "Section Break",
+   "label": "Context"
+  },
+  {
+   "fieldname": "invoice_context",
+   "fieldtype": "JSON",
+   "label": "Invoice Context"
+  },
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "Supplier",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "extracted_hsn",
+   "fieldtype": "Data",
+   "label": "Extracted HSN"
+  },
+  {
+   "fieldname": "item_group_of_correction",
+   "fieldtype": "Link",
+   "label": "Item Group of Correction",
+   "options": "Item Group"
+  },
+  {
+   "fieldname": "column_break_embedding",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "raw_text_embedding",
+   "fieldtype": "JSON",
+   "label": "Raw Text Embedding"
+  },
+  {
+   "fieldname": "is_conflicting",
+   "fieldtype": "Check",
+   "label": "Is Conflicting"
+  },
+  {
+   "fieldname": "conflicting_correction",
+   "fieldtype": "Link",
+   "label": "Conflicting Correction",
+   "options": "Mapping Correction Log"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2024-01-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Invoice Automation",
+ "name": "Mapping Correction Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Accounts Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

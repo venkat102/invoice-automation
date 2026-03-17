@@ -1,0 +1,120 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2024-01-01 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "source_doctype",
+  "raw_text",
+  "normalized_text",
+  "canonical_name",
+  "column_break_context",
+  "supplier_context",
+  "composite_key",
+  "created_from_correction",
+  "correction_count",
+  "last_used",
+  "is_active",
+  "superseded_by"
+ ],
+ "fields": [
+  {
+   "fieldname": "source_doctype",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Source Doctype",
+   "options": "Supplier\nItem\nPurchase Taxes and Charges Template\nCost Center",
+   "reqd": 1
+  },
+  {
+   "fieldname": "raw_text",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Raw Text",
+   "reqd": 1
+  },
+  {
+   "fieldname": "normalized_text",
+   "fieldtype": "Data",
+   "label": "Normalized Text"
+  },
+  {
+   "fieldname": "canonical_name",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Canonical Name",
+   "options": "source_doctype",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_context",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "supplier_context",
+   "fieldtype": "Link",
+   "label": "Supplier Context",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "composite_key",
+   "fieldtype": "Data",
+   "label": "Composite Key",
+   "unique": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "created_from_correction",
+   "fieldtype": "Check",
+   "label": "Created From Correction"
+  },
+  {
+   "default": "0",
+   "fieldname": "correction_count",
+   "fieldtype": "Int",
+   "label": "Correction Count"
+  },
+  {
+   "fieldname": "last_used",
+   "fieldtype": "Datetime",
+   "label": "Last Used"
+  },
+  {
+   "default": "1",
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "label": "Is Active"
+  },
+  {
+   "fieldname": "superseded_by",
+   "fieldtype": "Link",
+   "label": "Superseded By",
+   "options": "Mapping Alias"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2024-01-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Invoice Automation",
+ "name": "Mapping Alias",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Accounts Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}

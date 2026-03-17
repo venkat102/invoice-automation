@@ -1,0 +1,124 @@
+{
+ "actions": [],
+ "creation": "2024-01-01 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "line_number",
+  "extracted_description",
+  "extracted_qty",
+  "extracted_rate",
+  "extracted_amount",
+  "extracted_hsn",
+  "extracted_unit",
+  "extracted_item_code",
+  "column_break_match",
+  "matched_item",
+  "match_confidence",
+  "match_stage",
+  "match_details",
+  "is_corrected",
+  "original_match",
+  "correction_reasoning"
+ ],
+ "fields": [
+  {
+   "fieldname": "line_number",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Line Number"
+  },
+  {
+   "fieldname": "extracted_description",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Extracted Description"
+  },
+  {
+   "fieldname": "extracted_qty",
+   "fieldtype": "Data",
+   "label": "Extracted Qty"
+  },
+  {
+   "fieldname": "extracted_rate",
+   "fieldtype": "Data",
+   "label": "Extracted Rate"
+  },
+  {
+   "fieldname": "extracted_amount",
+   "fieldtype": "Data",
+   "label": "Extracted Amount"
+  },
+  {
+   "fieldname": "extracted_hsn",
+   "fieldtype": "Data",
+   "label": "Extracted HSN"
+  },
+  {
+   "fieldname": "extracted_unit",
+   "fieldtype": "Data",
+   "label": "Extracted Unit"
+  },
+  {
+   "fieldname": "extracted_item_code",
+   "fieldtype": "Data",
+   "label": "Extracted Item Code"
+  },
+  {
+   "fieldname": "column_break_match",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "matched_item",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Matched Item",
+   "options": "Item"
+  },
+  {
+   "fieldname": "match_confidence",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Match Confidence"
+  },
+  {
+   "fieldname": "match_stage",
+   "fieldtype": "Select",
+   "label": "Match Stage",
+   "options": "\nExact\nAlias\nFuzzy\nEmbedding\nLLM\nManual"
+  },
+  {
+   "fieldname": "match_details",
+   "fieldtype": "JSON",
+   "label": "Match Details"
+  },
+  {
+   "fieldname": "is_corrected",
+   "fieldtype": "Check",
+   "label": "Is Corrected"
+  },
+  {
+   "fieldname": "original_match",
+   "fieldtype": "Link",
+   "label": "Original Match",
+   "options": "Item"
+  },
+  {
+   "fieldname": "correction_reasoning",
+   "fieldtype": "Small Text",
+   "label": "Correction Reasoning"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2024-01-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Invoice Automation",
+ "name": "Invoice Line Item Match",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC"
+}
