@@ -5,12 +5,20 @@
  "engine": "InnoDB",
  "issingle": 1,
  "field_order": [
+  "sb_llm_providers",
+  "extraction_llm_provider",
+  "matching_llm_provider",
+  "json_retry_count",
+  "cb_llm_providers",
+  "openai_api_key",
+  "openai_model",
+  "gemini_api_key",
+  "gemini_model",
   "sb_ollama",
   "ollama_base_url",
   "ollama_model",
   "cb_ollama",
   "ollama_timeout_seconds",
-  "json_retry_count",
   "sb_llamaparse",
   "llamaparse_api_key",
   "cb_llamaparse",
@@ -22,6 +30,8 @@
   "cb_matching",
   "enable_llm_matching",
   "enable_auto_create",
+  "llm_max_candidates",
+  "llm_max_corrections_context",
   "sb_embedding",
   "embedding_similarity_threshold",
   "embedding_review_threshold",
@@ -29,11 +39,10 @@
   "agreement_confidence_boost",
   "cb_embedding",
   "embedding_model_name",
-  "sb_claude",
+  "sb_anthropic",
   "anthropic_api_key",
-  "cb_claude",
-  "llm_max_candidates",
-  "llm_max_corrections_context",
+  "anthropic_model",
+  "cb_anthropic",
   "sb_validation",
   "amount_tolerance",
   "cb_validation",
@@ -51,6 +60,65 @@
  ],
  "fields": [
   {
+   "fieldname": "sb_llm_providers",
+   "fieldtype": "Section Break",
+   "label": "LLM Provider Configuration"
+  },
+  {
+   "default": "Ollama",
+   "description": "LLM provider for invoice data extraction and image parsing",
+   "fieldname": "extraction_llm_provider",
+   "fieldtype": "Select",
+   "label": "Extraction LLM Provider",
+   "options": "Ollama\nOpenAI\nAnthropic\nGemini"
+  },
+  {
+   "default": "Anthropic",
+   "description": "LLM provider for Stage 5 matching (item/supplier matching fallback)",
+   "fieldname": "matching_llm_provider",
+   "fieldtype": "Select",
+   "label": "Matching LLM Provider",
+   "options": "Ollama\nOpenAI\nAnthropic\nGemini"
+  },
+  {
+   "default": "3",
+   "description": "Retries when LLM returns malformed JSON (applies to all providers)",
+   "fieldname": "json_retry_count",
+   "fieldtype": "Int",
+   "label": "JSON Retry Count"
+  },
+  {
+   "fieldname": "cb_llm_providers",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.extraction_llm_provider=='OpenAI' || doc.matching_llm_provider=='OpenAI'",
+   "fieldname": "openai_api_key",
+   "fieldtype": "Password",
+   "label": "OpenAI API Key"
+  },
+  {
+   "default": "gpt-4o",
+   "depends_on": "eval:doc.extraction_llm_provider=='OpenAI' || doc.matching_llm_provider=='OpenAI'",
+   "fieldname": "openai_model",
+   "fieldtype": "Data",
+   "label": "OpenAI Model"
+  },
+  {
+   "depends_on": "eval:doc.extraction_llm_provider=='Gemini' || doc.matching_llm_provider=='Gemini'",
+   "fieldname": "gemini_api_key",
+   "fieldtype": "Password",
+   "label": "Gemini API Key"
+  },
+  {
+   "default": "gemini-2.0-flash",
+   "depends_on": "eval:doc.extraction_llm_provider=='Gemini' || doc.matching_llm_provider=='Gemini'",
+   "fieldname": "gemini_model",
+   "fieldtype": "Data",
+   "label": "Gemini Model"
+  },
+  {
+   "depends_on": "eval:doc.extraction_llm_provider=='Ollama' || doc.matching_llm_provider=='Ollama'",
    "fieldname": "sb_ollama",
    "fieldtype": "Section Break",
    "label": "Ollama Configuration"
@@ -76,12 +144,6 @@
    "fieldname": "ollama_timeout_seconds",
    "fieldtype": "Int",
    "label": "Ollama Timeout (seconds)"
-  },
-  {
-   "default": "3",
-   "fieldname": "json_retry_count",
-   "fieldtype": "Int",
-   "label": "JSON Retry Count"
   },
   {
    "fieldname": "sb_llamaparse",
@@ -144,6 +206,18 @@
    "label": "Enable Auto Create"
   },
   {
+   "default": "10",
+   "fieldname": "llm_max_candidates",
+   "fieldtype": "Int",
+   "label": "LLM Max Candidates"
+  },
+  {
+   "default": "5",
+   "fieldname": "llm_max_corrections_context",
+   "fieldtype": "Int",
+   "label": "LLM Max Corrections Context"
+  },
+  {
    "fieldname": "sb_embedding",
    "fieldtype": "Section Break",
    "label": "Embedding Configuration"
@@ -183,9 +257,10 @@
    "label": "Embedding Model Name"
   },
   {
-   "fieldname": "sb_claude",
+   "depends_on": "eval:doc.extraction_llm_provider=='Anthropic' || doc.matching_llm_provider=='Anthropic'",
+   "fieldname": "sb_anthropic",
    "fieldtype": "Section Break",
-   "label": "Claude API Configuration"
+   "label": "Anthropic Configuration"
   },
   {
    "fieldname": "anthropic_api_key",
@@ -193,20 +268,14 @@
    "label": "Anthropic API Key"
   },
   {
-   "fieldname": "cb_claude",
+   "default": "claude-sonnet-4-20250514",
+   "fieldname": "anthropic_model",
+   "fieldtype": "Data",
+   "label": "Anthropic Model"
+  },
+  {
+   "fieldname": "cb_anthropic",
    "fieldtype": "Column Break"
-  },
-  {
-   "default": "10",
-   "fieldname": "llm_max_candidates",
-   "fieldtype": "Int",
-   "label": "LLM Max Candidates"
-  },
-  {
-   "default": "5",
-   "fieldname": "llm_max_corrections_context",
-   "fieldtype": "Int",
-   "label": "LLM Max Corrections Context"
   },
   {
    "fieldname": "sb_validation",

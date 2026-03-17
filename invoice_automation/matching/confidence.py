@@ -14,10 +14,10 @@ DEFAULT_CONFIG = {
 	"agreement_confidence_boost": 10,
 	"duplicate_check_amount_tolerance_pct": 5,
 	"duplicate_check_date_range_days": 7,
-	"lm_max_candidates": 10,
-	"lm_max_corrections_context": 5,
+	"llm_max_candidates": 10,
+	"llm_max_corrections_context": 5,
 	"embedding_model_name": "sentence-transformers/all-MiniLM-L6-v2",
-	"enable_lm_matching": 1,
+	"enable_llm_matching": 1,
 	"enable_auto_create": 0,
 }
 

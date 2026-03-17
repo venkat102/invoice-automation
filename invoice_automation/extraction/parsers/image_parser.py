@@ -1,4 +1,4 @@
-"""Image parser: sends image directly to Ollama vision model."""
+"""Image parser: sends image to the configured LLM vision model."""
 
 import base64
 
@@ -8,16 +8,16 @@ from invoice_automation.utils.exceptions import ParsingError
 
 
 class ImageParserStrategy(ParserStrategy):
-	"""Sends image files directly to Ollama vision model for text extraction."""
+	"""Sends image files to the configured LLM provider's vision model for text extraction."""
 
 	def supports(self, file_info: FileInfo) -> bool:
 		return file_info.file_type == "Image"
 
 	def parse(self, file_info: FileInfo) -> ParsedDocument:
 		try:
-			from invoice_automation.extraction.ollama_client import OllamaClient
+			from invoice_automation.llm import get_llm_provider
 
-			client = OllamaClient()
+			provider = get_llm_provider("extraction")
 
 			# Read and base64-encode the image
 			with open(file_info.file_path, "rb") as f:
@@ -29,7 +29,7 @@ class ImageParserStrategy(ParserStrategy):
 				"Include all numbers, dates, names, addresses, and line items."
 			)
 
-			text = client.generate_with_image(prompt, image_data)
+			text = provider.generate_with_image(prompt, image_data)
 
 			warnings = []
 			if len(text.strip()) < 50:
@@ -38,9 +38,9 @@ class ImageParserStrategy(ParserStrategy):
 			return ParsedDocument(
 				text=text,
 				page_count=1,
-				parsing_method="ollama_vision",
+				parsing_method="llm_vision",
 				warnings=warnings,
 			)
 
 		except Exception as e:
-			raise ParsingError(f"Image parsing via Ollama failed: {e}", original=e) from e
+			raise ParsingError(f"Image parsing via LLM failed: {e}", original=e) from e

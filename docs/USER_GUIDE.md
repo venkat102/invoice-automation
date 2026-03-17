@@ -91,9 +91,27 @@ After matching, the system verifies that the computed total (sum of qty × rate 
 
 ## Configuration
 
-All settings are in **Invoice Automation Settings** (single doctype):
-- **Ollama**: AI model server URL and model name
-- **LlamaParse**: API key for PDF parsing
+All settings are in **Invoice Automation Settings** (single doctype). Navigate to it in the desk sidebar.
+
+### Choosing Your LLM Provider
+
+The first section — **LLM Provider Configuration** — has two dropdowns that control which AI backend is used:
+
+| Field | Controls | Options | Default |
+|-------|----------|---------|---------|
+| **Extraction LLM Provider** | Invoice data extraction + image parsing | Ollama / OpenAI / Anthropic / Gemini | Ollama |
+| **Matching LLM Provider** | Stage 5 item/supplier matching fallback | Ollama / OpenAI / Anthropic / Gemini | Anthropic |
+
+When you select a provider, the form automatically shows the relevant API key and model fields for that provider. You can use different providers for extraction and matching (e.g. Ollama for extraction, OpenAI for matching).
+
+**Provider details:**
+- **Ollama** — free, runs locally, requires `ollama serve` running and a vision model pulled
+- **OpenAI** — GPT-4o and other models, requires `openai_api_key`
+- **Anthropic** — Claude models, requires `anthropic_api_key`
+- **Gemini** — Google's models, requires `gemini_api_key`
+
+### Other Settings
+- **LlamaParse**: API key for PDF parsing (optional, works with any extraction provider)
 - **Matching Thresholds**: Confidence levels for auto-create and review routing
 - **File Handling**: Max file size and allowed extensions
 
@@ -117,5 +135,5 @@ A: Yes, but disabled by default. Enable in **Invoice Automation Settings** → *
 **Q: What file types are supported?**
 A: PDF (native and scanned), PNG, JPG, JPEG, TIFF, WEBP, DOCX, and DOC. Configurable in settings.
 
-**Q: What if Ollama is not running?**
-A: Extraction will fail gracefully with a clear error. Use the **Health Check** endpoint or check the processing_error field on the queue record.
+**Q: What if the LLM provider is not running or misconfigured?**
+A: Extraction will fail gracefully with a clear error. Use the **Health Check** endpoint (reports `extraction_llm` and `matching_llm` status) or check the `processing_error` field on the queue record. Ensure your configured provider is running and API keys are set in **Invoice Automation Settings**.

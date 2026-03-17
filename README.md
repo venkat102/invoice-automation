@@ -1,16 +1,47 @@
 ### Invoice Automation
 
-Invoice Automation
+AI-powered invoice processing for ERPNext. Extracts data from uploaded invoices (PDF, images, DOCX), matches extracted fields against your Suppliers, Items, and Tax Templates, and learns from reviewer corrections to improve over time.
 
-### Installation
+### Key Features
 
-You can install this app using the [bench](https://github.com/frappe/bench) CLI:
+- **Multi-format extraction**: PDF (via LlamaParse), images (via LLM vision), DOCX, DOC
+- **5-stage matching pipeline**: Exact lookup, alias lookup, fuzzy matching, embedding search, LLM fallback
+- **Correction memory**: Learns from human corrections — aliases, embeddings, and reviewer reasoning
+- **Confidence-based routing**: Auto-create, review queue, or manual entry based on match confidence
+- **Multi-provider LLM support**: Ollama (free/local), OpenAI (ChatGPT), Anthropic (Claude), Google Gemini
 
+### Quick Start
+
+1. Install the app:
 ```bash
 cd $PATH_TO_YOUR_BENCH
 bench get-app $URL_OF_THIS_REPO --branch develop
-bench install-app invoice_automation
+bench --site your-site install-app invoice_automation
 ```
+
+2. Configure LLM providers in **Invoice Automation Settings**:
+   - **Extraction LLM Provider** (default: Ollama) — for reading invoices
+   - **Matching LLM Provider** (default: Anthropic) — for Stage 5 item matching
+   - Set API keys for your chosen providers
+
+3. Upload invoices via **Invoice Processing Queue** or the `parse_invoice` API
+
+### Supported LLM Providers
+
+| Provider | Type | Default For | Requires |
+|----------|------|-------------|----------|
+| **Ollama** | Free, local | Extraction | `ollama serve` running locally |
+| **OpenAI** | Paid API | — | `openai_api_key` |
+| **Anthropic** | Paid API | Matching | `anthropic_api_key` |
+| **Gemini** | Paid API | — | `gemini_api_key` |
+
+All configuration is managed through a single DocType: **Invoice Automation Settings**.
+
+### Documentation
+
+- [Technical Documentation](docs/TECHNICAL.md) — architecture, API reference, configuration
+- [System Flow](docs/SYSTEM_FLOW.md) — pipeline diagrams and data flow
+- [User Guide](docs/USER_GUIDE.md) — how to upload, review, and correct invoices
 
 ### Contributing
 

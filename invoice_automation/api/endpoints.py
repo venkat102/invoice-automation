@@ -273,12 +273,19 @@ def health_check():
 	"""Returns system health: Ollama, Redis, embedding model, index sizes."""
 	health = {}
 
-	# Ollama
+	# Extraction LLM
 	try:
-		from invoice_automation.extraction.ollama_client import OllamaClient
-		health["ollama"] = OllamaClient().health_check()
+		from invoice_automation.llm import get_llm_provider
+		health["extraction_llm"] = get_llm_provider("extraction").health_check()
 	except Exception as e:
-		health["ollama"] = {"status": "error", "error": str(e)}
+		health["extraction_llm"] = {"status": "error", "error": str(e)}
+
+	# Matching LLM
+	try:
+		from invoice_automation.llm import get_llm_provider as get_provider
+		health["matching_llm"] = get_provider("matching").health_check()
+	except Exception as e:
+		health["matching_llm"] = {"status": "error", "error": str(e)}
 
 	# Redis
 	try:
@@ -346,6 +353,8 @@ def get_config():
 	try:
 		doc = frappe.get_cached_doc("Invoice Automation Settings")
 		return {
+			"extraction_llm_provider": doc.extraction_llm_provider or "Ollama",
+			"matching_llm_provider": doc.matching_llm_provider or "Anthropic",
 			"ollama_base_url": doc.ollama_base_url,
 			"ollama_model": doc.ollama_model,
 			"auto_create_threshold": doc.auto_create_threshold,

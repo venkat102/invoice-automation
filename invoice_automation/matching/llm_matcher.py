@@ -1,4 +1,4 @@
-"""Stage 5: Claude API fallback for invoice matching."""
+"""Stage 5: LLM fallback for invoice matching. Provider-agnostic."""
 
 import json
 
@@ -7,7 +7,7 @@ from invoice_automation.matching.exact_matcher import MatchResult
 
 
 class LLMMatcher:
-	"""LLM-based matching using Claude API as a final fallback."""
+	"""LLM-based matching using the configured provider as a final fallback."""
 
 	def match(
 		self,
@@ -17,25 +17,16 @@ class LLMMatcher:
 		candidates: list,
 		corrections_context: list,
 	) -> MatchResult:
-		"""Use Claude API to match raw_text against candidates.
+		"""Use the configured LLM provider to match raw_text against candidates.
 
 		Confidence is capped at 88% — LLM matches should still be reviewed.
 		"""
 		config = get_config()
 
-		if not config.get("enable_lm_matching", False):
+		if not config.get("enable_llm_matching", False):
 			return MatchResult(
 				matched=False, doctype=source_doctype, stage="LLM",
 				details={"reason": "LLM matching disabled"},
-			)
-
-		from invoice_automation.utils.helpers import get_config_value
-
-		api_key = get_config_value("anthropic_api_key")
-		if not api_key:
-			return MatchResult(
-				matched=False, doctype=source_doctype, stage="LLM",
-				details={"reason": "No anthropic_api_key configured"},
 			)
 
 		if not raw_text or not candidates:
@@ -45,18 +36,13 @@ class LLMMatcher:
 			)
 
 		try:
-			import anthropic
+			from invoice_automation.llm import get_llm_provider
 
-			client = anthropic.Anthropic(api_key=api_key)
+			provider = get_llm_provider("matching")
 			prompt = self._build_prompt(raw_text, supplier, candidates, corrections_context)
+			response_text = provider.generate(prompt)
 
-			response = client.messages.create(
-				model="claude-sonnet-4-20250514",
-				max_tokens=1024,
-				messages=[{"role": "user", "content": prompt}],
-			)
-
-			return self._parse_response(response.content[0].text, source_doctype)
+			return self._parse_response(response_text, source_doctype)
 
 		except Exception as e:
 			return MatchResult(

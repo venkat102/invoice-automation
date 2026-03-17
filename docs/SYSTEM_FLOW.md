@@ -7,7 +7,7 @@ flowchart TD
     A[File Upload / API Call] --> B[FileHandler: Validate & Hash]
     B --> C{File Type Detection}
     C -->|PDF| D1[PDFParserStrategy: LlamaParse]
-    C -->|Image| D2[ImageParserStrategy: Ollama Vision]
+    C -->|Image| D2[ImageParserStrategy: LLM Vision]
     C -->|DOCX| D3[DOCXParserStrategy: python-docx]
     C -->|DOC| D4[DOCParserStrategy: LibreOffice → DOCX]
     C -->|Other| D5[FallbackParser: Error]
@@ -17,7 +17,7 @@ flowchart TD
     D3 --> E
     D4 --> E
 
-    E --> F[OllamaClient: LLM Extraction]
+    E --> F[LLM Provider: Extraction]
     F -->|JSON Output| G[JSON Repair if needed]
     G --> H[ExtractedInvoice Schema Validation]
     H --> I[Normalization: currency, dates, decimals, text]
@@ -66,16 +66,17 @@ File Upload → Type Detection → Format Routing → Parsing → LLM Extraction
 
 **Step 2: Parser Selection** (`parsers/base_parser.py` factory)
 - `PDFParserStrategy` → LlamaParse API (handles native, scanned, hybrid, multi-page)
-- `ImageParserStrategy` → Direct Ollama vision model
+- `ImageParserStrategy` → Configured LLM provider's vision model (Ollama, OpenAI, Anthropic, or Gemini)
 - `DOCXParserStrategy` → python-docx text extraction
 - `DOCParserStrategy` → LibreOffice conversion → DOCX parser
 - `FallbackParser` → Structured error for unsupported types
 
-**Step 3: LLM Extraction** (`ollama_client.py` + `prompt_templates.py`)
-- Sends parsed text to configurable Ollama model (default: `qwen2.5vl:7b`)
+**Step 3: LLM Extraction** (`llm/` providers + `prompt_templates.py`)
+- Sends parsed text to the configured extraction LLM provider (Ollama, OpenAI, Anthropic, or Gemini)
+- Default: Ollama with `qwen2.5vl:7b` (local, free). Paid alternatives: GPT-4o, Claude, Gemini
 - Requests strict JSON output matching ExtractedInvoice schema
 - Retries on malformed JSON (configurable retry count)
-- Auto-repairs common JSON issues via `json_repair.py`
+- OpenAI and Gemini use native JSON mode; Ollama and Anthropic use retry + `json_repair.py`
 
 **Step 4: Normalization** (`normalizers/`)
 - Currency: ₹ → INR, $ → USD, € → EUR
@@ -121,7 +122,8 @@ File Upload → Type Detection → Format Routing → Parsing → LLM Extraction
 
 ### Stage 5: LLM-Assisted Match (~500-2000ms)
 - Only when Stages 1-4 fail
-- Claude Sonnet with candidates + past corrections with reviewer reasoning
+- Uses the configured matching LLM provider (Ollama, OpenAI, Anthropic, or Gemini)
+- Sends candidates + past corrections with reviewer reasoning
 - Confidence capped at 88% (always requires review)
 
 ## Subsystem 3: Correction Memory (CodeRabbit Pattern)

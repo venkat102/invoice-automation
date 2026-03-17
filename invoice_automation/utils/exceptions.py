@@ -35,18 +35,23 @@ class ParsingError(ExtractionError):
 		super().__init__(message, "PARSING_ERROR", original)
 
 
-class OllamaConnectionError(ExtractionError):
-	"""Cannot reach the Ollama server."""
+class LLMConnectionError(ExtractionError):
+	"""Cannot reach the LLM provider backend."""
 
-	def __init__(self, message: str = "Cannot connect to Ollama server", original: Exception | None = None):
-		super().__init__(message, "OLLAMA_CONNECTION_ERROR", original)
+	def __init__(self, message: str = "Cannot connect to LLM provider", original: Exception | None = None):
+		super().__init__(message, "LLM_CONNECTION_ERROR", original)
 
 
-class OllamaExtractionError(ExtractionError):
-	"""Ollama returned unusable output after all retries."""
+class LLMProviderError(ExtractionError):
+	"""LLM provider returned unusable output or is misconfigured."""
 
 	def __init__(self, message: str, original: Exception | None = None):
-		super().__init__(message, "OLLAMA_EXTRACTION_ERROR", original)
+		super().__init__(message, "LLM_PROVIDER_ERROR", original)
+
+
+# Backward-compatible aliases
+OllamaConnectionError = LLMConnectionError
+OllamaExtractionError = LLMProviderError
 
 
 class SchemaValidationError(ExtractionError):

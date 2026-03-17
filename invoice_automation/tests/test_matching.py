@@ -78,7 +78,7 @@ class TestLLMMatcher(unittest.TestCase):
 	def test_disabled_llm(self):
 		with patch("invoice_automation.matching.llm_matcher.frappe") as mock_frappe, \
 			patch("invoice_automation.matching.llm_matcher.get_config") as mock_config:
-			mock_config.return_value = {"enable_lm_matching": False}
+			mock_config.return_value = {"enable_llm_matching": False}
 
 			from invoice_automation.matching.llm_matcher import LLMMatcher
 

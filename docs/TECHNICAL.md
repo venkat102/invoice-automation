@@ -30,7 +30,7 @@ invoice_automation/
 │   ├── schema.py                  # Pydantic v2: ExtractedInvoice, ExtractedLineItem, ExtractionWarning
 │   ├── extraction_service.py      # Orchestrator: file → parse → LLM → normalize → validate
 │   ├── file_handler.py            # File validation, SHA-256 hashing, MIME detection
-│   ├── ollama_client.py           # Ollama HTTP API client with JSON retry + health check
+│   ├── ollama_client.py           # Backward-compatible shim (use llm/ package instead)
 │   ├── json_repair.py             # Auto-repair malformed LLM JSON output
 │   ├── prompt_templates.py        # Extraction prompt engineering
 │   ├── base_extractor.py          # Abstract InvoiceExtractor interface
@@ -38,7 +38,7 @@ invoice_automation/
 │   ├── parsers/
 │   │   ├── base_parser.py         # ParserStrategy ABC + get_parser() factory
 │   │   ├── pdf_parser.py          # LlamaParse integration (fallback: PyMuPDF)
-│   │   ├── image_parser.py        # Ollama vision model direct
+│   │   ├── image_parser.py        # LLM vision model (provider-agnostic)
 │   │   ├── docx_parser.py         # python-docx text + table extraction
 │   │   ├── doc_parser.py          # LibreOffice conversion → DOCX
 │   │   └── fallback_parser.py     # Structured error for unsupported types
@@ -59,7 +59,7 @@ invoice_automation/
 │   ├── alias_matcher.py           # Stage 2: Mapping Alias composite key lookups
 │   ├── fuzzy_matcher.py           # Stage 3: thefuzz token_sort/partial/token_set
 │   ├── embedding_matcher.py       # Stage 4: Dual-index semantic vector search
-│   ├── llm_matcher.py             # Stage 5: Claude API with correction context
+│   ├── llm_matcher.py             # Stage 5: LLM matching (provider-agnostic)
 │   └── confidence.py              # get_config(), determine_routing(), ConfidenceScorer
 │
 ├── memory/                        # ── SUBSYSTEM 3: Correction Memory ──
@@ -78,6 +78,14 @@ invoice_automation/
 │   ├── tax_validator.py           # match_tax_template(), validate_tax_consistency()
 │   └── duplicate_detector.py      # check_duplicate(): exact (block) + near (flag)
 │
+├── llm/                              # ── LLM Provider Abstraction ──
+│   ├── base.py                   # LLMProvider ABC (generate, generate_with_image, generate_json, health_check)
+│   ├── factory.py                # get_llm_provider(purpose) factory
+│   ├── ollama_provider.py        # Ollama (local open models)
+│   ├── openai_provider.py        # OpenAI / ChatGPT (GPT-4o, etc.)
+│   ├── anthropic_provider.py     # Anthropic / Claude (Sonnet, Opus, Haiku)
+│   └── gemini_provider.py        # Google Gemini (Flash, Pro)
+│
 ├── api/endpoints.py               # All whitelisted API endpoints (12 endpoints)
 ├── utils/
 │   ├── redis_index.py             # rebuild_all, _build_supplier_index, _build_item_index, doc events
@@ -95,10 +103,12 @@ invoice_automation/
 ### Prerequisites
 - Frappe bench with ERPNext installed
 - Python 3.11+
-- Ollama installed and running locally (`ollama serve`)
-- Vision model pulled: `ollama pull qwen2.5vl:7b`
+- At least one LLM provider configured:
+  - **Ollama** (default for extraction): Install and run locally (`ollama serve`), pull a vision model (`ollama pull qwen2.5vl:7b`)
+  - **OpenAI**: API key from https://platform.openai.com/api-keys
+  - **Anthropic** (default for matching): API key from https://console.anthropic.com/
+  - **Gemini**: API key from https://aistudio.google.com/apikey
 - (Optional) LlamaParse API key for PDF parsing
-- (Optional) Anthropic API key for Stage 5 LLM matching
 
 ### Install the App
 ```bash
@@ -119,10 +129,14 @@ cd frappe-bench
 All configuration is managed through a single DocType: **Invoice Automation Settings** (a Single document in the Frappe desk). There is no need for `.env` files or `site_config.json` overrides — every setting lives in this DocType.
 
 1. Navigate to **Invoice Automation Settings** in the desk
-2. Set `ollama_base_url` (default: `http://localhost:11434`)
-3. Set `ollama_model` (default: `qwen2.5vl:7b`)
-4. (Optional) Set `llamaparse_api_key` for PDF parsing
-5. (Optional) Set `anthropic_api_key` for Stage 5 LLM matching
+2. Choose your **Extraction LLM Provider** (default: Ollama for local/free usage)
+3. Choose your **Matching LLM Provider** (default: Anthropic for Stage 5 matching)
+4. Configure the selected providers:
+   - **Ollama**: Set `ollama_base_url` and `ollama_model` (needs `ollama serve` running locally)
+   - **OpenAI**: Set `openai_api_key` and `openai_model` (default: `gpt-4o`)
+   - **Anthropic**: Set `anthropic_api_key` and `anthropic_model` (default: `claude-sonnet-4-20250514`)
+   - **Gemini**: Set `gemini_api_key` and `gemini_model` (default: `gemini-2.0-flash`)
+5. (Optional) Set `llamaparse_api_key` for PDF parsing
 6. Review and adjust matching thresholds, file handling limits, and other settings as needed
 
 See [Configuration Reference](#configuration-reference) for the full field list.
@@ -172,11 +186,11 @@ FileInfo → get_parser() factory
 
 Parser.parse() → ParsedDocument (text + page_count + warnings)
 
-ParsedDocument.text → OllamaClient.generate_json()
+ParsedDocument.text → get_llm_provider("extraction").generate_json()
     → EXTRACTION_PROMPT + EXTRACTION_SYSTEM_PROMPT
-    → Ollama API call (HTTP POST to /api/generate)
-    → If malformed JSON → json_repair.repair_json()
-    → If still malformed → retry (up to json_retry_count)
+    → Configured provider API call (Ollama / OpenAI / Anthropic / Gemini)
+    → OpenAI and Gemini use native JSON mode; others use retry + json_repair
+    → If malformed JSON → json_repair.repair_json() → retry (up to json_retry_count)
     → Parse into dict
 
 dict → ExtractedInvoice(**data) Pydantic validation
@@ -227,7 +241,7 @@ Result → ExtractionResult stored on Invoice Processing Queue
 
 **`ImageParserStrategy`** — For PNG, JPG, JPEG, TIFF, WEBP
 - Reads image file, base64-encodes it
-- Sends to Ollama vision model via `OllamaClient.generate_with_image()`
+- Sends to the configured extraction LLM provider's vision model via `provider.generate_with_image()`
 - Warns if very little text extracted (<50 chars)
 
 **`DOCXParserStrategy`** — For DOCX files
@@ -244,18 +258,28 @@ Result → ExtractionResult stored on Invoice Processing Queue
 **`FallbackParser`** — Last resort
 - Raises `FileValidationError` with supported formats listed
 
-### Ollama Client (`ollama_client.py`)
+### LLM Provider Abstraction (`llm/`)
 
-**`OllamaClient`** reads all config from Invoice Automation Settings:
-- `ollama_base_url`, `ollama_model`, `ollama_timeout_seconds`, `json_retry_count`
+The extraction engine uses a provider-agnostic LLM abstraction. The provider is selected via `extraction_llm_provider` in Invoice Automation Settings.
 
-Methods:
+**Supported providers:**
+
+| Provider | Package | Vision Support | JSON Mode | Config Fields |
+|----------|---------|---------------|-----------|---------------|
+| **Ollama** (default) | `httpx` (built-in) | Yes | Retry + repair | `ollama_base_url`, `ollama_model`, `ollama_timeout_seconds` |
+| **OpenAI** | `openai` | Yes (GPT-4o) | Native `json_object` | `openai_api_key`, `openai_model` |
+| **Anthropic** | `anthropic` | Yes (Claude) | Retry + repair | `anthropic_api_key`, `anthropic_model` |
+| **Gemini** | `google-genai` | Yes | Native `application/json` | `gemini_api_key`, `gemini_model` |
+
+**Common interface** (`LLMProvider` ABC):
 - `generate(prompt, system)` → raw text response
-- `generate_with_image(prompt, image_base64)` → raw text response
-- `generate_json(prompt, system)` → parsed dict (with retry + JSON repair)
-- `health_check()` → `{status, base_url, configured_model, model_available, available_models}`
+- `generate_with_image(prompt, image_base64)` → raw text response (vision)
+- `generate_json(prompt, system)` → parsed dict (with retry + JSON repair fallback)
+- `health_check()` → provider status dict
 
-API calls go to `{base_url}/api/generate` with `stream: false`.
+**Factory:** `get_llm_provider(purpose)` returns the configured provider for `"extraction"` or `"matching"`.
+
+API calls for Ollama go to `{base_url}/api/generate` with `stream: false`.
 
 ### JSON Repair (`json_repair.py`)
 
@@ -405,7 +429,9 @@ Searches TWO indexes sequentially:
 
 ### Stage 5: LLM Match (`llm_matcher.py`)
 
-Only invoked when Stages 1-4 all fail. Uses Claude Sonnet via Anthropic API.
+Only invoked when Stages 1-4 all fail. Uses the configured `matching_llm_provider` (default: Anthropic/Claude).
+
+**Supported providers:** Ollama, OpenAI (ChatGPT), Anthropic (Claude), or Google Gemini — configured in Invoice Automation Settings.
 
 **Prompt construction:**
 1. Extracted line item text
@@ -416,7 +442,7 @@ Only invoked when Stages 1-4 all fail. Uses Claude Sonnet via Anthropic API.
 
 **Confidence capped at 88%** — LLM matches always require human review.
 
-Gated by `enable_llm_matching` setting. API key read from `anthropic_api_key` in Invoice Automation Settings.
+Gated by `enable_llm_matching` setting. Provider and API key configured in Invoice Automation Settings.
 
 ### Confidence-Based Routing (`confidence.py`)
 
@@ -556,7 +582,7 @@ Batch processing: 256 items per batch with `frappe.publish_progress()`.
 
 System-wide configuration. All thresholds and connection settings.
 
-**Sections:** Ollama Config, LlamaParse Config, Matching Thresholds, Embedding Config, Claude API Config, Validation, File Handling, General. See [Configuration Reference](#configuration-reference) for all fields.
+**Sections:** LLM Provider Configuration, Ollama Config, LlamaParse Config, Matching Thresholds, Embedding Config, Anthropic Configuration, Validation, File Handling, General. See [Configuration Reference](#configuration-reference) for all fields.
 
 ### Invoice Processing Queue
 
@@ -653,13 +679,25 @@ All configuration is centralized in the **Invoice Automation Settings** DocType 
 
 Full field list:
 
+### LLM Providers
+| Field | Default | Description |
+|-------|---------|-------------|
+| `extraction_llm_provider` | `Ollama` | Provider for extraction + vision (Ollama / OpenAI / Anthropic / Gemini) |
+| `matching_llm_provider` | `Anthropic` | Provider for Stage 5 matching (Ollama / OpenAI / Anthropic / Gemini) |
+| `json_retry_count` | 3 | Retries on malformed JSON (applies to all providers) |
+| `openai_api_key` | — | Password field (shown when OpenAI selected) |
+| `openai_model` | `gpt-4o` | Any OpenAI chat model (shown when OpenAI selected) |
+| `gemini_api_key` | — | Password field (shown when Gemini selected) |
+| `gemini_model` | `gemini-2.0-flash` | Any Gemini model (shown when Gemini selected) |
+
+The form dynamically shows/hides provider-specific fields based on the selected `extraction_llm_provider` and `matching_llm_provider` values via `depends_on` expressions. You only see the fields relevant to your chosen providers.
+
 ### Ollama
 | Field | Default | Description |
 |-------|---------|-------------|
 | `ollama_base_url` | `http://localhost:11434` | Ollama server URL |
 | `ollama_model` | `qwen2.5vl:7b` | Vision model (NEVER hardcode) |
 | `ollama_timeout_seconds` | 120 | Request timeout |
-| `json_retry_count` | 3 | Retries on malformed JSON |
 
 ### LlamaParse
 | Field | Default | Description |
@@ -680,10 +718,11 @@ Full field list:
 | `enable_llm_matching` | 1 | Enable/disable Stage 5 |
 | `enable_auto_create` | 0 | Enable/disable auto PI creation |
 
-### Claude API
+### Anthropic
 | Field | Default | Description |
 |-------|---------|-------------|
-| `anthropic_api_key` | — | Password field |
+| `anthropic_api_key` | — | Password field (required if Anthropic selected) |
+| `anthropic_model` | `claude-sonnet-4-20250514` | Any Anthropic model |
 | `llm_max_candidates` | 10 | Max items sent to LLM |
 | `llm_max_corrections_context` | 5 | Max corrections in LLM prompt |
 
@@ -782,7 +821,7 @@ curl -X POST '...' -d '{"index_type": "all"}'  # "redis" | "embeddings" | "all"
 **`GET health_check`** (allow_guest) — System health
 ```bash
 curl 'http://site/api/method/invoice_automation.api.endpoints.health_check'
-# Response: {ollama: {status, model_available}, redis: {status}, embedding_index: {count}, queue: {pending, processing}}
+# Response: {extraction_llm: {provider, status, ...}, matching_llm: {provider, status, ...}, redis: {status}, embedding_index: {count}, queue: {pending, processing}}
 ```
 
 **`GET get_system_stats`** — Analytics
@@ -794,7 +833,7 @@ curl '...'
 **`GET get_config`** — Current non-sensitive settings
 ```bash
 curl '...'
-# Response: {ollama_base_url, ollama_model, thresholds, limits}
+# Response: {extraction_llm_provider, matching_llm_provider, ollama_base_url, ollama_model, thresholds, limits}
 ```
 
 ---
@@ -865,9 +904,11 @@ class MyParserStrategy(ParserStrategy):
 
 ### Swapping the Extraction LLM
 
-The `OllamaClient` reads model name from settings. Options:
-1. Change `ollama_model` in settings to any Ollama model
-2. Replace `OllamaClient` entirely — `ExtractionService` only calls `client.generate_json(prompt, system)`
+Change `extraction_llm_provider` in Invoice Automation Settings to switch between Ollama, OpenAI, Anthropic, or Gemini. Each provider's model name is configurable independently. To add a new provider:
+
+1. Create `llm/my_provider.py` implementing `LLMProvider` (generate, generate_with_image, generate_json, health_check)
+2. Add to `PROVIDERS` dict in `llm/factory.py`
+3. Add provider name to `extraction_llm_provider` / `matching_llm_provider` Select options in the DocType JSON
 
 ---
 
@@ -878,12 +919,12 @@ InvoiceAutomationError (base) — message, code, original exception
 ├── ExtractionError
 │   ├── FileValidationError     # bad type, too large, corrupt, empty, password-protected
 │   ├── ParsingError            # LlamaParse failure, LibreOffice timeout/missing
-│   ├── OllamaConnectionError  # can't reach Ollama server
-│   ├── OllamaExtractionError  # unusable output after all retries
+│   ├── LLMConnectionError     # can't reach LLM provider (alias: OllamaConnectionError)
+│   ├── LLMProviderError       # unusable output or misconfigured provider (alias: OllamaExtractionError)
 │   └── SchemaValidationError   # extracted data doesn't match Pydantic schema
 ├── MatchingError
 │   ├── IndexNotReadyError      # Redis or embedding index not built
-│   ├── LLMMatchingError        # Claude API failure/timeout
+│   ├── LLMMatchingError        # LLM provider failure during Stage 5 matching
 │   └── InvoiceCreationError    # failed to create Draft Purchase Invoice
 └── MemoryError
     ├── AliasConflictError      # contradictory alias corrections
@@ -898,13 +939,14 @@ Every exception carries: `message` (human-readable), `code` (machine-readable), 
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| "Cannot connect to Ollama" | Ollama not running | `ollama serve` |
-| "Model not available" | Model not pulled | `ollama pull qwen2.5vl:7b` |
+| "Cannot connect to Ollama" | Ollama not running (when Ollama is the configured provider) | `ollama serve` |
+| "Model not available" | Ollama model not pulled | `ollama pull qwen2.5vl:7b` |
+| LLM provider API error | API key invalid or provider unreachable | Check API key for the configured provider in Invoice Automation Settings |
 | Extraction returns empty | Scanned PDF without LlamaParse | Set `llamaparse_api_key` |
 | Supplier not matching | GSTIN/name not in Redis | `bench execute invoice_automation.utils.redis_index.rebuild_all` |
 | Items not matching | Normalization mismatch | Check `normalize_text()` output |
 | Embedding search empty | Index not built | `bench execute invoice_automation.embeddings.index_builder.build_full_index` |
-| LLM stage not firing | Disabled or no API key | Check `enable_llm_matching` + `anthropic_api_key` in Invoice Automation Settings |
+| LLM stage not firing | Disabled or no API key | Check `enable_llm_matching` + API key for the configured `matching_llm_provider` |
 | LlamaParse failure | Invalid/missing API key | Check `llamaparse_api_key` in Invoice Automation Settings |
 | DOC parsing fails | LibreOffice not installed | `apt install libreoffice` |
 | Password-protected PDF | Not supported | Clear error message returned |
@@ -918,8 +960,8 @@ Every exception carries: `message` (human-readable), `code` (machine-readable), 
 |-----------|-----------|------------|
 | Fuzzy matching | O(n) scan over master data | Pre-filter by item_group; cache enabled by default |
 | Embedding search | NumPy matrix size | Swap to Qdrant for >50K entries |
-| LLM extraction | 5-30s per invoice via Ollama | Use faster model; increase timeout; use GPU |
-| LLM matching | 0.5-2s per Claude API call | Reduce `llm_max_candidates` |
+| LLM extraction | 5-30s per invoice (varies by provider) | Use faster model; paid providers (OpenAI, Gemini) are typically faster than local Ollama; use GPU for Ollama |
+| LLM matching | 0.5-2s per LLM API call | Reduce `llm_max_candidates`; use faster model; local Ollama avoids network latency |
 | Redis index rebuild | Full scan of Supplier + Item | Runs daily; incremental updates via hooks |
 | Embedding model load | ~2-3s cold start | Worker processes keep model warm |
 | Batch processing | Sequential per worker | Scale with more Frappe workers |

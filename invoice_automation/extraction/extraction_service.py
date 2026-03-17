@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 import frappe
 
 from invoice_automation.extraction.file_handler import FileHandler, FileInfo
-from invoice_automation.extraction.ollama_client import OllamaClient
 from invoice_automation.extraction.parsers.base_parser import get_parser, ParsedDocument
 from invoice_automation.extraction.prompt_templates import EXTRACTION_SYSTEM_PROMPT, EXTRACTION_PROMPT
 from invoice_automation.extraction.schema import ExtractedInvoice, ExtractionWarning
@@ -67,8 +66,8 @@ class ExtractionService:
 				result.extraction_time_ms = int((time.time() - start) * 1000)
 				return result
 
-			# Step 3: LLM extraction via Ollama
-			invoice = self._extract_with_ollama(parsed.text)
+			# Step 3: LLM extraction
+			invoice = self._extract_with_llm(parsed.text)
 			result.extracted_invoice = invoice
 
 			# Step 4: Normalize fields
@@ -117,15 +116,17 @@ class ExtractionService:
 		result.extraction_time_ms = int((time.time() - start) * 1000)
 		return result
 
-	def _extract_with_ollama(self, document_text: str) -> ExtractedInvoice:
-		"""Send text to Ollama and parse the structured JSON response."""
-		client = OllamaClient()
+	def _extract_with_llm(self, document_text: str) -> ExtractedInvoice:
+		"""Send text to the configured LLM provider and parse the structured JSON response."""
+		from invoice_automation.llm import get_llm_provider
+
+		provider = get_llm_provider("extraction")
 
 		prompt = EXTRACTION_PROMPT.format(
 			document_text=document_text[:8000],  # Limit to avoid token overflow
 		)
 
-		data = client.generate_json(prompt, system=EXTRACTION_SYSTEM_PROMPT)
+		data = provider.generate_json(prompt, system=EXTRACTION_SYSTEM_PROMPT)
 
 		# Parse line items separately if they came as raw dicts
 		if "line_items" in data and isinstance(data["line_items"], list):
