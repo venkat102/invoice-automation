@@ -127,15 +127,27 @@ All configuration is managed through a single DocType: **Invoice Automation Sett
 
 See [Configuration Reference](#configuration-reference) for the full field list.
 
-### Build Indexes
-```bash
-bench --site {site} execute invoice_automation.utils.redis_index.rebuild_all
-bench --site {site} execute invoice_automation.embeddings.index_builder.build_full_index
-```
+### What Happens on Install
+
+When the app is installed on an existing site (`bench install-app`), the following runs automatically:
+
+1. **Redis indexes** are built synchronously — Suppliers (name, GSTIN, PAN), Items (name, barcodes, MPN), and all active Mapping Aliases are loaded into Redis for O(1) lookups (Stages 1 & 2).
+2. **Embedding index** is built in the background via `frappe.enqueue` (long queue, up to 1 hour timeout) — generates vector embeddings for all Items and historical corrections (Stage 4). This requires `sentence-transformers` and may take several minutes depending on the number of Items.
+
+No manual `bench execute` commands are needed for initial setup.
 
 ### Verify Installation
 ```bash
 bench --site {site} execute invoice_automation.api.endpoints.health_check
+```
+
+### Manual Index Rebuild (if needed)
+```bash
+# Rebuild Redis indexes (Suppliers + Items + Aliases)
+bench --site {site} execute invoice_automation.utils.redis_index.rebuild_all
+
+# Rebuild embedding index (slow — loads ML model)
+bench --site {site} execute invoice_automation.embeddings.index_builder.build_full_index
 ```
 
 ---
@@ -806,7 +818,7 @@ curl '...'
 
 | Schedule | Handler | Purpose |
 |----------|---------|---------|
-| Daily | `utils.redis_index.rebuild_all` | Full Redis index rebuild (safety net) |
+| Daily | `utils.redis_index.rebuild_all` | Full Redis index rebuild: Suppliers, Items, and Aliases (safety net) |
 | Daily | `embeddings.index_builder.sync_missing` | Add Items not yet in embedding index |
 | Weekly | `memory.conflict_resolver.resolve_stale_conflicts` | Auto-resolve correction conflicts >30 days old |
 
@@ -814,8 +826,8 @@ curl '...'
 
 | Hook | Handler | Purpose |
 |------|---------|---------|
-| `after_install` | `utils.redis_index.rebuild_all` | Build Redis index on fresh install |
-| `after_migrate` | `utils.redis_index.rebuild_all` | Rebuild index after schema changes |
+| `after_install` | `setup.after_install` | Build Redis indexes (Suppliers, Items, Aliases) + enqueue embedding build in background |
+| `after_migrate` | `setup.after_migrate` | Rebuild Redis indexes (Suppliers, Items, Aliases) |
 
 ---
 

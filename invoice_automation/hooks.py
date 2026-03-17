@@ -7,8 +7,8 @@ app_license = "mit"
 
 required_apps = ["frappe", "erpnext"]
 
-after_install = "invoice_automation.utils.redis_index.rebuild_all"
-after_migrate = "invoice_automation.utils.redis_index.rebuild_all"
+after_install = "invoice_automation.setup.after_install"
+after_migrate = "invoice_automation.setup.after_migrate"
 
 # Document Events
 doc_events = {

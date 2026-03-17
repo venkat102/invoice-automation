@@ -34,7 +34,7 @@ def _delete_lookup(doctype, normalized_value):
 
 
 def rebuild_all():
-	"""Clear all invoice_automation:* keys and rebuild supplier + item indexes."""
+	"""Clear all invoice_automation:* keys and rebuild supplier + item + alias indexes."""
 	r = _get_redis()
 	# Delete all existing keys with our prefix
 	for key in r.get_keys(f"{KEY_PREFIX}:*"):
@@ -42,6 +42,7 @@ def rebuild_all():
 
 	_build_supplier_index()
 	_build_item_index()
+	_build_alias_cache()
 	frappe.logger().info("invoice_automation: Redis index rebuild complete")
 
 
@@ -91,6 +92,24 @@ def remove_supplier_index(doc, method=None):
 			pan = extract_pan_from_gstin(gstin)
 			if pan:
 				_delete_lookup(doctype, pan)
+
+
+def _build_alias_cache():
+	"""Load all active Mapping Aliases into Redis for Stage 2 lookups."""
+	try:
+		aliases = frappe.get_all(
+			"Mapping Alias",
+			filters={"is_active": 1},
+			fields=["composite_key", "canonical_name"],
+			limit=0,
+		)
+	except Exception:
+		return
+
+	r = _get_redis()
+	for alias in aliases:
+		if alias.composite_key and alias.canonical_name:
+			r.set_value(f"{KEY_PREFIX}:alias:{alias.composite_key}", alias.canonical_name)
 
 
 def _build_item_index():
