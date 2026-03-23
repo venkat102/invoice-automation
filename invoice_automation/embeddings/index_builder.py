@@ -222,7 +222,8 @@ def sync_missing():
 
 def update_item_embedding(doc, method=None):
 	"""Doc event handler: update embedding for a single item on save."""
-	frappe.enqueue(
+	from invoice_automation.utils.helpers import enqueue_if_scheduler_active
+	enqueue_if_scheduler_active(
 		"invoice_automation.embeddings.index_builder._update_single_item",
 		item_name=doc.name,
 		queue="default",

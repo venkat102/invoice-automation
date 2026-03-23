@@ -77,7 +77,8 @@ def process_correction(queue_name, line_number, corrected_item, source_doctype="
 	correction_log.insert(ignore_permissions=True)
 
 	# 3. Update historical embedding index (background job)
-	frappe.enqueue(
+	from invoice_automation.utils.helpers import enqueue_if_scheduler_active
+	enqueue_if_scheduler_active(
 		"invoice_automation.memory.correction_handler._update_embedding_index",
 		raw_text=raw_text,
 		corrected_item=corrected_item,

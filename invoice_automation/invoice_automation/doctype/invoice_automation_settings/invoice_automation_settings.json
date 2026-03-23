@@ -53,6 +53,11 @@
   "allowed_extensions",
   "cb_file_handling",
   "enable_batch_parse",
+  "sb_index_management",
+  "rebuild_redis_index",
+  "rebuild_embedding_index",
+  "cb_index_management",
+  "rebuild_all_indexes",
   "sb_general",
   "log_level",
   "cb_general",
@@ -330,6 +335,30 @@
    "fieldname": "enable_batch_parse",
    "fieldtype": "Check",
    "label": "Enable Batch Parse"
+  },
+  {
+   "fieldname": "sb_index_management",
+   "fieldtype": "Section Break",
+   "label": "Index Management"
+  },
+  {
+   "fieldname": "rebuild_redis_index",
+   "fieldtype": "Button",
+   "label": "Rebuild Redis Index"
+  },
+  {
+   "fieldname": "rebuild_embedding_index",
+   "fieldtype": "Button",
+   "label": "Rebuild Embedding Index"
+  },
+  {
+   "fieldname": "cb_index_management",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "rebuild_all_indexes",
+   "fieldtype": "Button",
+   "label": "Rebuild All Indexes"
   },
   {
    "fieldname": "sb_general",

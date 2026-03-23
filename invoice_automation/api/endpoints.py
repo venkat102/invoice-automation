@@ -57,7 +57,8 @@ def parse_invoice(file_url=None, extracted_json=None):
 	queue_doc.insert()
 
 	# Enqueue the pipeline
-	frappe.enqueue(
+	from invoice_automation.utils.helpers import enqueue_if_scheduler_active
+	enqueue_if_scheduler_active(
 		"invoice_automation.api.endpoints._run_full_pipeline",
 		queue_name=queue_doc.name,
 		queue="default",
@@ -125,7 +126,8 @@ def trigger_matching(queue_name):
 	if doc.extraction_status != "Completed":
 		frappe.throw(_("Extraction not completed yet"))
 
-	frappe.enqueue(
+	from invoice_automation.utils.helpers import enqueue_if_scheduler_active
+	enqueue_if_scheduler_active(
 		"invoice_automation.api.endpoints._run_matching",
 		queue_name=queue_name,
 		queue="default",
@@ -252,13 +254,14 @@ def reject_invoice(queue_name, reason=None):
 @frappe.whitelist()
 def rebuild_index(index_type="all"):
 	"""Triggers rebuild of Redis index, embedding index, or both."""
+	from invoice_automation.utils.helpers import enqueue_if_scheduler_active
 	if index_type in ("redis", "all"):
-		frappe.enqueue(
+		enqueue_if_scheduler_active(
 			"invoice_automation.utils.redis_index.rebuild_all",
 			queue="long", timeout=600,
 		)
 	if index_type in ("embeddings", "all"):
-		frappe.enqueue(
+		enqueue_if_scheduler_active(
 			"invoice_automation.embeddings.index_builder.build_full_index",
 			queue="long", timeout=1800,
 		)
