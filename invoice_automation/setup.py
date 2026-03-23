@@ -1,7 +1,5 @@
 """Install and migrate hooks for Invoice Automation."""
 
-import frappe
-
 
 def after_install():
 	"""Run on fresh app install: build all Redis indexes and enqueue embedding build."""
@@ -9,12 +7,12 @@ def after_install():
 
 	rebuild_all()
 	# Embedding build is slow (loads ML model, processes all Items) — run in background
-	frappe.enqueue(
+	from invoice_automation.utils.helpers import enqueue_if_scheduler_active
+	enqueue_if_scheduler_active(
 		"invoice_automation.embeddings.index_builder.build_full_index",
 		queue="long",
 		timeout=3600,
 	)
-	frappe.logger().info("invoice_automation: Enqueued embedding index build (background)")
 
 
 def after_migrate():
