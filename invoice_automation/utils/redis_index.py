@@ -1,6 +1,12 @@
 import frappe
 
-from invoice_automation.matching.normalizer import normalize_gstin, normalize_text, extract_pan_from_gstin
+from invoice_automation.matching.normalizer import (
+	extract_pan_from_gstin,
+	is_valid_gstin,
+	normalize_gstin,
+	normalize_tax_id,
+	normalize_text,
+)
 
 
 KEY_PREFIX = "invoice_automation"
@@ -47,14 +53,35 @@ def rebuild_all():
 
 
 def _build_supplier_index():
-	"""Index all active suppliers by name, GSTIN, and PAN."""
+	"""Index all active suppliers by name, tax ID, and (if applicable) GSTIN/PAN."""
+	# Fetch tax_id (standard field). The gstin field only exists when
+	# India-specific apps (e.g. India Compliance) are installed.
+	fields = ["name", "supplier_name", "tax_id"]
+	gstin_field_exists = _has_field("Supplier", "gstin")
+	if gstin_field_exists:
+		fields.append("gstin")
+
 	suppliers = frappe.get_all(
 		"Supplier",
 		filters={"disabled": 0},
-		fields=["name", "supplier_name", "tax_id", "gstin"],
+		fields=fields,
 	)
 	for sup in suppliers:
-		_index_supplier(sup.name, sup.supplier_name, sup.tax_id, sup.gstin)
+		_index_supplier(
+			sup.name,
+			sup.supplier_name,
+			sup.tax_id,
+			sup.get("gstin") if gstin_field_exists else None,
+		)
+
+
+def _has_field(doctype, fieldname):
+	"""Check if a field exists on a doctype (cached)."""
+	try:
+		meta = frappe.get_meta(doctype)
+		return meta.has_field(fieldname)
+	except Exception:
+		return False
 
 
 def _index_supplier(name, supplier_name, tax_id, gstin_field=None):
@@ -63,12 +90,20 @@ def _index_supplier(name, supplier_name, tax_id, gstin_field=None):
 	if name != supplier_name:
 		_set_lookup(doctype, normalize_text(name), name)
 
-	# Index both tax_id and gstin fields
-	for raw_gstin in [tax_id, gstin_field]:
-		if raw_gstin:
-			gstin = normalize_gstin(raw_gstin)
+	# Collect all raw tax identifiers (tax_id is the generic field,
+	# gstin is India-specific and may not exist on every install)
+	raw_ids = list({v for v in [tax_id, gstin_field] if v})
+
+	for raw_id in raw_ids:
+		# Always index the generic normalized form so any tax ID format is searchable
+		generic = normalize_tax_id(raw_id)
+		if generic:
+			_set_lookup(doctype, generic, name)
+
+		# If it looks like an Indian GSTIN, also index the PAN component
+		if is_valid_gstin(raw_id):
+			gstin = normalize_gstin(raw_id)
 			if gstin:
-				_set_lookup(doctype, gstin, name)
 				pan = extract_pan_from_gstin(gstin)
 				if pan:
 					_set_lookup(doctype, pan, name)
@@ -83,15 +118,18 @@ def remove_supplier_index(doc, method=None):
 	_delete_lookup(doctype, normalize_text(doc.supplier_name))
 	if doc.name != doc.supplier_name:
 		_delete_lookup(doctype, normalize_text(doc.name))
-	for raw_gstin in [doc.tax_id, getattr(doc, "gstin", None)]:
-		if not raw_gstin:
+	for raw_id in [doc.tax_id, getattr(doc, "gstin", None)]:
+		if not raw_id:
 			continue
-		gstin = normalize_gstin(raw_gstin)
-		if gstin:
-			_delete_lookup(doctype, gstin)
-			pan = extract_pan_from_gstin(gstin)
-			if pan:
-				_delete_lookup(doctype, pan)
+		generic = normalize_tax_id(raw_id)
+		if generic:
+			_delete_lookup(doctype, generic)
+		if is_valid_gstin(raw_id):
+			gstin = normalize_gstin(raw_id)
+			if gstin:
+				pan = extract_pan_from_gstin(gstin)
+				if pan:
+					_delete_lookup(doctype, pan)
 
 
 def _build_alias_cache():

@@ -475,13 +475,13 @@ def _run_matching(queue_name):
 		# Build a dict for the pipeline (which accepts both dict and pydantic)
 		pipeline_input = {
 			"supplier_name": invoice.vendor_name,
-			"supplier_gstin": invoice.vendor_tax_id,
+			"supplier_tax_id": invoice.vendor_tax_id,
 			"invoice_number": invoice.invoice_number,
 			"invoice_date": invoice.invoice_date,
 			"due_date": invoice.due_date,
 			"total_amount": invoice.total_amount,
 			"currency": invoice.currency,
-			"company_gstin": invoice.customer_tax_id,
+			"company_tax_id": invoice.customer_tax_id,
 			"line_items": [
 				{
 					"description": li.description,

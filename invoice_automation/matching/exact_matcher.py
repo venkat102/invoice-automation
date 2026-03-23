@@ -6,8 +6,10 @@ import frappe
 
 from invoice_automation.matching.normalizer import (
 	extract_pan_from_gstin,
+	is_valid_gstin,
 	normalize_gstin,
 	normalize_item_text,
+	normalize_tax_id,
 	normalize_text,
 )
 
@@ -49,14 +51,14 @@ class ExactMatcher:
 			return None
 
 	def match_supplier(self, extracted_data) -> MatchResult:
-		"""Try GSTIN (100%), PAN (98%), normalized name (95%). Accepts dict or pydantic model."""
+		"""Try tax ID (100%), PAN from GSTIN (98%), normalized name (95%). Accepts dict or pydantic model."""
 		doctype = "Supplier"
 
-		gstin_raw = (
-			extracted_data.get("supplier_gstin", "")
-			if isinstance(extracted_data, dict)
-			else getattr(extracted_data, "supplier_gstin", "")
-		) or ""
+		# Accept supplier_tax_id with fallback to supplier_gstin for backwards compat
+		if isinstance(extracted_data, dict):
+			tax_id_raw = extracted_data.get("supplier_tax_id", "") or extracted_data.get("supplier_gstin", "") or ""
+		else:
+			tax_id_raw = getattr(extracted_data, "supplier_tax_id", "") or getattr(extracted_data, "supplier_gstin", "") or ""
 
 		supplier_name = (
 			extracted_data.get("supplier_name", "")
@@ -64,27 +66,28 @@ class ExactMatcher:
 			else getattr(extracted_data, "supplier_name", "")
 		) or ""
 
-		# GSTIN lookup (100% confidence)
-		gstin = normalize_gstin(gstin_raw)
-		if gstin:
-			matched = self._redis_lookup(doctype, gstin)
+		# Tax ID lookup (100% confidence) — works for any tax ID format
+		normalized_id = normalize_tax_id(tax_id_raw)
+		if normalized_id:
+			matched = self._redis_lookup(doctype, normalized_id)
 			if matched:
 				return MatchResult(
 					matched=True, doctype=doctype, matched_name=matched,
 					confidence=100.0, stage="Exact",
-					details={"match_type": "gstin", "gstin": gstin},
+					details={"match_type": "tax_id", "tax_id": normalized_id},
 				)
 
-			# PAN lookup (98% confidence)
-			pan = extract_pan_from_gstin(gstin)
-			if pan:
-				matched = self._redis_lookup(doctype, pan)
-				if matched:
-					return MatchResult(
-						matched=True, doctype=doctype, matched_name=matched,
-						confidence=98.0, stage="Exact",
-						details={"match_type": "pan", "pan": pan},
-					)
+			# If it looks like an Indian GSTIN, try PAN extraction (98% confidence)
+			if is_valid_gstin(tax_id_raw):
+				pan = extract_pan_from_gstin(tax_id_raw)
+				if pan:
+					matched = self._redis_lookup(doctype, pan)
+					if matched:
+						return MatchResult(
+							matched=True, doctype=doctype, matched_name=matched,
+							confidence=98.0, stage="Exact",
+							details={"match_type": "pan", "pan": pan},
+						)
 
 		# Normalized name lookup (95% confidence)
 		normalized_name = normalize_text(supplier_name)
@@ -148,11 +151,11 @@ class ExactMatcher:
 			},
 		)
 
-	def match_tax_template(self, tax_detail, supplier_gstin, company_gstin) -> MatchResult:
+	def match_tax_template(self, tax_detail, supplier_tax_id, company_tax_id) -> MatchResult:
 		"""Rule-based tax template lookup."""
 		from invoice_automation.validation.tax_validator import match_tax_template
 
-		result = match_tax_template(tax_detail, supplier_gstin, company_gstin)
+		result = match_tax_template(tax_detail, supplier_tax_id, company_tax_id)
 		if result.get("matched_template"):
 			return MatchResult(
 				matched=True,

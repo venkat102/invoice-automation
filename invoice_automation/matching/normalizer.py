@@ -65,8 +65,16 @@ def normalize_text(text: str) -> str:
     return result
 
 
+def normalize_tax_id(tax_id: str) -> str:
+    """Strip spaces and special chars, uppercase. Works for any tax ID format (GSTIN, VAT, TIN, etc.)."""
+    if not tax_id:
+        return ""
+
+    return re.sub(r"[^A-Za-z0-9]", "", tax_id).upper()
+
+
 def normalize_gstin(gstin: str) -> str:
-    """Strip spaces and special chars, uppercase, validate length 15."""
+    """Strip spaces and special chars, uppercase, validate length 15 (Indian GSTIN)."""
     if not gstin:
         return ""
 
@@ -76,6 +84,12 @@ def normalize_gstin(gstin: str) -> str:
         return ""
 
     return result
+
+
+def is_valid_gstin(tax_id: str) -> bool:
+    """Check if a tax ID looks like a valid Indian GSTIN (15 alphanumeric chars)."""
+    normalized = normalize_tax_id(tax_id)
+    return len(normalized) == 15 and bool(re.match(r"^\d{2}[A-Z]{5}\d{4}[A-Z]\d[A-Z\d][A-Z]$", normalized))
 
 
 def extract_pan_from_gstin(gstin: str) -> str | None:

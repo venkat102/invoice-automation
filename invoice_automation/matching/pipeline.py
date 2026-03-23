@@ -74,16 +74,12 @@ class MatchingPipeline:
 
 		# Step 3: Match tax templates (rule-based only)
 		tax_matches = []
-		supplier_gstin = (
-			extracted_data.get("supplier_gstin", "")
-			if isinstance(extracted_data, dict)
-			else getattr(extracted_data, "supplier_gstin", "")
-		) or ""
-		company_gstin = (
-			extracted_data.get("company_gstin", "")
-			if isinstance(extracted_data, dict)
-			else getattr(extracted_data, "company_gstin", "")
-		) or ""
+		if isinstance(extracted_data, dict):
+			supplier_tax_id = extracted_data.get("supplier_tax_id", "") or extracted_data.get("supplier_gstin", "") or ""
+			company_tax_id = extracted_data.get("company_tax_id", "") or extracted_data.get("company_gstin", "") or ""
+		else:
+			supplier_tax_id = getattr(extracted_data, "supplier_tax_id", "") or getattr(extracted_data, "supplier_gstin", "") or ""
+			company_tax_id = getattr(extracted_data, "company_tax_id", "") or getattr(extracted_data, "company_gstin", "") or ""
 		taxes = (
 			extracted_data.get("taxes", [])
 			if isinstance(extracted_data, dict)
@@ -93,7 +89,7 @@ class MatchingPipeline:
 		for tax_detail in taxes:
 			tax_dict = tax_detail if isinstance(tax_detail, dict) else tax_detail.model_dump()
 			tax_match = self.exact_matcher.match_tax_template(
-				tax_dict, supplier_gstin, company_gstin
+				tax_dict, supplier_tax_id, company_tax_id
 			)
 			tax_matches.append(tax_match)
 

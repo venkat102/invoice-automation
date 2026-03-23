@@ -1,6 +1,23 @@
-"""Normalize and validate tax IDs (GSTIN, PAN, VAT numbers)."""
+"""Normalize and validate tax IDs (GSTIN, PAN, VAT numbers, TIN, etc.)."""
 
 import re
+
+
+def normalize_tax_id(raw: str | None) -> str | None:
+	"""Strip spaces/hyphens, uppercase. Works for any tax ID format."""
+	if not raw:
+		return None
+
+	cleaned = re.sub(r"[\s\-]", "", raw).upper()
+	return cleaned if cleaned else None
+
+
+def is_valid_gstin(raw: str | None) -> bool:
+	"""Check if a tax ID looks like a valid Indian GSTIN."""
+	if not raw:
+		return False
+	cleaned = re.sub(r"[\s\-]", "", raw).upper()
+	return len(cleaned) == 15 and bool(re.match(r"^\d{2}[A-Z]{5}\d{4}[A-Z]\d[A-Z\d][A-Z]$", cleaned))
 
 
 def normalize_gstin(raw: str | None) -> str | None:

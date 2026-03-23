@@ -2,29 +2,43 @@ import frappe
 from frappe import _
 
 
-def match_tax_template(tax_detail, supplier_gstin=None, company_gstin=None):
+def _is_gstin(tax_id):
+    """Check if a tax ID looks like an Indian GSTIN (15 alphanumeric chars starting with 2 digits)."""
+    import re
+    if not tax_id:
+        return False
+    cleaned = re.sub(r"[\s\-]", "", tax_id).upper()
+    return len(cleaned) == 15 and bool(re.match(r"^\d{2}[A-Z]{5}\d{4}[A-Z]\d[A-Z\d][A-Z]$", cleaned))
+
+
+def match_tax_template(tax_detail, supplier_tax_id=None, company_tax_id=None):
     """Validate tax calculations and match a Purchase Taxes and Charges Template.
 
     Args:
         tax_detail: dict with keys like ``tax_type`` (e.g. "CGST", "SGST",
-            "IGST"), ``rate``, ``amount``.
-        supplier_gstin: Supplier's GSTIN string.
-        company_gstin: Company's GSTIN string.
+            "IGST", "VAT"), ``rate``, ``amount``.
+        supplier_tax_id: Supplier's tax identifier (GSTIN, VAT, TIN, etc.).
+        company_tax_id: Company's tax identifier.
 
     Returns:
         dict with ``matched_template``, ``confidence``, ``is_valid``, ``details``.
     """
-    supplier_state = _extract_state_code(supplier_gstin)
-    company_state = _extract_state_code(company_gstin)
-
-    is_intra_state = (
-        supplier_state is not None
-        and company_state is not None
-        and supplier_state == company_state
-    )
-
     tax_type = (tax_detail.get("tax_type") or "").upper()
     rate = float(tax_detail.get("rate") or 0)
+
+    # GST-specific intra/inter-state validation only applies when both IDs are Indian GSTINs
+    supplier_state = None
+    company_state = None
+    is_intra_state = None
+
+    if _is_gstin(supplier_tax_id) and _is_gstin(company_tax_id):
+        supplier_state = _extract_state_code(supplier_tax_id)
+        company_state = _extract_state_code(company_tax_id)
+        is_intra_state = (
+            supplier_state is not None
+            and company_state is not None
+            and supplier_state == company_state
+        )
 
     details = {
         "supplier_state_code": supplier_state,
@@ -34,7 +48,7 @@ def match_tax_template(tax_detail, supplier_gstin=None, company_gstin=None):
         "rate": rate,
     }
 
-    # Validate tax type against interstate/intrastate expectation
+    # Validate tax type against interstate/intrastate expectation (GST-specific)
     is_valid = True
     if supplier_state and company_state:
         if is_intra_state and tax_type == "IGST":
@@ -56,13 +70,13 @@ def match_tax_template(tax_detail, supplier_gstin=None, company_gstin=None):
     }
 
 
-def validate_tax_consistency(taxes, supplier_gstin, company_gstin):
+def validate_tax_consistency(taxes, supplier_tax_id=None, company_tax_id=None):
     """Check that the list of taxes is internally consistent.
 
     Args:
         taxes: list of dicts, each with ``tax_type`` and ``rate``.
-        supplier_gstin: Supplier's GSTIN string.
-        company_gstin: Company's GSTIN string.
+        supplier_tax_id: Supplier's tax identifier (GSTIN, VAT, TIN, etc.).
+        company_tax_id: Company's tax identifier.
 
     Returns:
         dict with ``is_valid``, ``errors``, ``details``.
@@ -74,11 +88,10 @@ def validate_tax_consistency(taxes, supplier_gstin, company_gstin):
     has_cgst = "CGST" in tax_types
     has_sgst = "SGST" in tax_types
 
-    # Check mixing
+    # GST-specific mixing checks only when GST tax types are present
     if has_igst and (has_cgst or has_sgst):
         errors.append("Cannot mix IGST with CGST/SGST")
 
-    # Check CGST and SGST rates are equal
     if has_cgst and has_sgst:
         cgst_rates = [float(t.get("rate") or 0) for t in taxes if t.get("tax_type", "").upper() == "CGST"]
         sgst_rates = [float(t.get("rate") or 0) for t in taxes if t.get("tax_type", "").upper() == "SGST"]
@@ -87,16 +100,20 @@ def validate_tax_consistency(taxes, supplier_gstin, company_gstin):
                 f"CGST rate ({cgst_rates[0]}%) and SGST rate ({sgst_rates[0]}%) must be equal"
             )
 
-    # Validate against GSTIN state codes
-    supplier_state = _extract_state_code(supplier_gstin)
-    company_state = _extract_state_code(company_gstin)
+    # GSTIN-based state code validation only when both IDs are Indian GSTINs
+    supplier_state = None
+    company_state = None
 
-    if supplier_state and company_state:
-        is_intra_state = supplier_state == company_state
-        if is_intra_state and has_igst:
-            errors.append("IGST should not be used for intra-state transactions")
-        if not is_intra_state and (has_cgst or has_sgst):
-            errors.append("CGST/SGST should not be used for inter-state transactions")
+    if _is_gstin(supplier_tax_id) and _is_gstin(company_tax_id):
+        supplier_state = _extract_state_code(supplier_tax_id)
+        company_state = _extract_state_code(company_tax_id)
+
+        if supplier_state and company_state:
+            is_intra_state = supplier_state == company_state
+            if is_intra_state and has_igst:
+                errors.append("IGST should not be used for intra-state transactions")
+            if not is_intra_state and (has_cgst or has_sgst):
+                errors.append("CGST/SGST should not be used for inter-state transactions")
 
     return {
         "is_valid": len(errors) == 0,
