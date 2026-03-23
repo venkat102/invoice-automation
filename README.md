@@ -4,8 +4,9 @@ AI-powered invoice processing for ERPNext. Extracts data from uploaded invoices 
 
 ### Key Features
 
-- **Multi-format extraction**: PDF (via LlamaParse), images (via LLM vision), DOCX, DOC
+- **Multi-format extraction**: PDF (LlamaParse / PyMuPDF / LLM vision fallback for scanned docs), images (LLM vision), DOCX, DOC
 - **5-stage matching pipeline**: Exact lookup, alias lookup, fuzzy matching, embedding search, LLM fallback
+- **Review dialog**: Side-by-side view of extracted vs matched data with inline corrections and reasoning
 - **Correction memory**: Learns from human corrections — aliases, embeddings, and reviewer reasoning
 - **Confidence-based routing**: Auto-create, review queue, or manual entry based on match confidence
 - **Multi-provider LLM support**: Ollama (free/local), OpenAI (ChatGPT), Anthropic (Claude), Google Gemini

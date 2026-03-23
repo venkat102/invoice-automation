@@ -110,3 +110,8 @@ class FuzzyMatcher:
 	@classmethod
 	def clear_cache(cls):
 		cls._master_data_cache.clear()
+
+
+def clear_master_cache(doc=None, method=None):
+	"""Doc event handler: clear the fuzzy matcher cache when master data changes."""
+	FuzzyMatcher.clear_cache()

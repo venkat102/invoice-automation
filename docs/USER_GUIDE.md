@@ -11,7 +11,7 @@ Invoice Automation processes vendor invoices automatically by:
 
 ### Single Invoice
 1. Navigate to **Invoice Processing Queue** → **+ Add**
-2. Attach your invoice file in the **Source File** field
+2. Attach your invoice file in the **Source File** field (required)
 3. Save — extraction and matching start automatically in the background
 4. Or use the API: call `parse_invoice` with a `file_url`
 
@@ -19,7 +19,7 @@ Invoice Automation processes vendor invoices automatically by:
 Use the API endpoint `parse_invoices_batch` with a list of file URLs to process multiple invoices at once. Enable batch parsing in **Invoice Automation Settings**.
 
 ### Supported File Formats
-- **PDF** (native, scanned, or hybrid) — parsed via LlamaParse
+- **PDF** (native or scanned) — native PDFs use PyMuPDF text extraction; scanned PDFs are rendered as images and sent to the LLM vision model; LlamaParse is used if an API key is configured
 - **Images** (PNG, JPG, JPEG, TIFF, WEBP) — sent directly to the AI vision model
 - **DOCX** — text extracted via python-docx
 - **DOC** — converted via LibreOffice, then processed as DOCX
@@ -39,11 +39,23 @@ Each invoice goes through these stages (visible in the **Workflow State** field)
 | **Extracting** | AI is reading and interpreting the invoice file |
 | **Extracted** | Data extracted, ready for matching |
 | **Matching** | System is mapping extracted data to ERPNext records |
-| **Routed** | Matching complete, invoice routed based on confidence |
-| **Under Review** | Waiting for human review |
+| **Routed** | Matching complete, all fields high confidence |
+| **Under Review** | Some fields have medium confidence, waiting for human review |
 | **Invoice Created** | Draft Purchase Invoice created |
 | **Rejected** | Invoice was rejected by a reviewer |
 | **Failed** | An error occurred during processing |
+
+### Form Actions
+
+The Invoice Processing Queue form shows contextual action buttons based on the current state:
+
+| Button | When Visible | What It Does |
+|--------|-------------|--------------|
+| **Review & Create Invoice** | Extraction completed, no PI created yet | Opens the review dialog (see below) |
+| **Trigger Matching** | Extraction done, matching pending/failed | Re-runs the 5-stage matching pipeline |
+| **Retry Extraction** | Extraction failed | Creates a new queue entry and re-processes the file |
+| **Reject** | Invoice is under review/routed | Marks the invoice as rejected with a reason |
+| **View Purchase Invoice** | PI has been created | Navigates to the linked Purchase Invoice |
 
 ## Understanding Confidence Scores
 
@@ -59,15 +71,56 @@ The **Overall Confidence** is the *lowest* confidence across all fields — one 
 
 ## Reviewing and Correcting Mappings
 
-When an invoice lands in the Review Queue:
+When an invoice is ready for review, click the **Review & Create Invoice** button. This opens a dialog showing:
 
-1. Open the Invoice Processing Queue record
-2. Review the **Matched Header** section: check the supplier, bill number, dates
-3. Check the **Line Items** table — focus on low-confidence items
-4. For each incorrect match:
-   - Change the **Matched Item** link to the correct Item
-   - Add **Correction Reasoning** explaining why (this teaches the system!)
-5. Click **Confirm Mapping** to accept and create the Purchase Invoice
+### Review Dialog
+
+The review dialog has three sections:
+
+**1. Validation Warnings** (top)
+- Amount mismatch alerts (computed total vs extracted total)
+- Duplicate invoice warnings
+
+**2. Header Comparison Table**
+
+A side-by-side view of extracted vs matched data with confidence scores:
+
+| Field | Extracted | Matched | Confidence |
+|-------|-----------|---------|------------|
+| Supplier | Vendor name from invoice | Matched ERPNext Supplier | 95% |
+| Invoice No. | From invoice | Mapped value | - |
+| Invoice Date | From invoice | Mapped value | - |
+| Due Date | From invoice | Mapped value | - |
+| Currency | From invoice | Mapped value | - |
+| Total Amount | From invoice | Mapped value | - |
+| Tax Template | - | Matched template | - |
+
+Confidence scores are color-coded: green (90%+), orange (60-89%), red (below 60%).
+
+If the supplier is wrong, use the **Supplier Override** field below the table to select the correct one.
+
+**3. Line Items Table**
+
+Each extracted line item shows:
+- **Extracted data**: description, qty, rate, amount, HSN code
+- **Matched Item**: the ERPNext Item the system matched it to
+- **Confidence**: how sure the system is about the match
+- **Stage**: which matching stage found it (Exact, Alias, Fuzzy, Embedding, LLM)
+
+### Making Corrections
+
+Below the line items table, each line has:
+- **Item field**: Change the matched Item if the system got it wrong
+- **Reasoning field**: Explain *why* this correction is right — this teaches the system!
+
+### Confirming
+
+Click **Confirm & Create Invoice** to:
+1. Save your corrections (aliases created, correction log updated, embeddings re-indexed)
+2. Check for duplicate invoices
+3. Create a **Draft Purchase Invoice** with all the mapped data
+
+The Purchase Invoice is always created as a Draft — it is never auto-submitted.
 
 ### Why Reasoning Notes Matter
 
@@ -87,7 +140,7 @@ Check the **Duplicate Details** field for information about the existing invoice
 
 ## Handling Amount Mismatches
 
-After matching, the system verifies that the computed total (sum of qty × rate + taxes) matches the extracted total. If there's a mismatch exceeding the configured tolerance (default ₹1), the invoice is flagged for review.
+After matching, the system verifies that the computed total (sum of qty x rate + taxes) matches the extracted total. If there's a mismatch exceeding the configured tolerance (default: 1), the invoice is flagged in the review dialog with details.
 
 ## Configuration
 
@@ -111,7 +164,7 @@ When you select a provider, the form automatically shows the relevant API key an
 - **Gemini** — Google's models, requires `gemini_api_key`
 
 ### Other Settings
-- **LlamaParse**: API key for PDF parsing (optional, works with any extraction provider)
+- **LlamaParse**: API key for PDF parsing (optional — without it, scanned PDFs fall back to LLM vision)
 - **Matching Thresholds**: Confidence levels for auto-create and review routing
 - **File Handling**: Max file size and allowed extensions
 
@@ -136,4 +189,7 @@ A: Yes, but disabled by default. Enable in **Invoice Automation Settings** → *
 A: PDF (native and scanned), PNG, JPG, JPEG, TIFF, WEBP, DOCX, and DOC. Configurable in settings.
 
 **Q: What if the LLM provider is not running or misconfigured?**
-A: Extraction will fail gracefully with a clear error. Use the **Health Check** endpoint (reports `extraction_llm` and `matching_llm` status) or check the `processing_error` field on the queue record. Ensure your configured provider is running and API keys are set in **Invoice Automation Settings**.
+A: Extraction will fail gracefully with a clear error. Use the **Health Check** endpoint or check the `processing_error` field on the queue record. Ensure your configured provider is running and API keys are set in **Invoice Automation Settings**.
+
+**Q: What happens with scanned PDFs if I don't have a LlamaParse key?**
+A: The system renders each PDF page as an image using PyMuPDF and sends it to your configured extraction LLM's vision model. This requires `PyMuPDF` to be installed and a vision-capable LLM (e.g. Ollama with `qwen2.5vl`, OpenAI GPT-4o, Anthropic Claude, or Gemini).

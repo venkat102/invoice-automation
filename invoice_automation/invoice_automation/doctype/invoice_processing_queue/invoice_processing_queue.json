@@ -71,11 +71,14 @@
   {
    "fieldname": "source_file",
    "fieldtype": "Attach",
-   "label": "Source File"
+   "in_list_view": 1,
+   "label": "Source File",
+   "reqd": 1
   },
   {
    "fieldname": "file_name",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "File Name",
    "read_only": 1
   },
@@ -125,6 +128,7 @@
    "default": "Pending",
    "fieldname": "workflow_state",
    "fieldtype": "Select",
+   "in_list_view": 1,
    "label": "Workflow State",
    "options": "Pending\nExtracting\nExtracted\nMatching\nMatched\nRouted\nUnder Review\nInvoice Created\nRejected\nFailed"
   },
@@ -365,7 +369,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2024-01-01 00:00:00.000000",
+ "modified": "2025-03-23 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Invoice Automation",
  "name": "Invoice Processing Queue",
@@ -392,5 +396,5 @@
  ],
  "sort_field": "modified",
  "sort_order": "DESC",
- "title_field": "name"
+ "title_field": "file_name"
 }

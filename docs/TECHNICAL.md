@@ -37,7 +37,7 @@ invoice_automation/
 │   ├── json_extractor.py          # Pre-extracted JSON input adapter
 │   ├── parsers/
 │   │   ├── base_parser.py         # ParserStrategy ABC + get_parser() factory
-│   │   ├── pdf_parser.py          # LlamaParse integration (fallback: PyMuPDF)
+│   │   ├── pdf_parser.py          # 3-step: LlamaParse → PyMuPDF text → LLM vision
 │   │   ├── image_parser.py        # LLM vision model (provider-agnostic)
 │   │   ├── docx_parser.py         # python-docx text + table extraction
 │   │   ├── doc_parser.py          # LibreOffice conversion → DOCX
@@ -86,7 +86,7 @@ invoice_automation/
 │   ├── anthropic_provider.py     # Anthropic / Claude (Sonnet, Opus, Haiku)
 │   └── gemini_provider.py        # Google Gemini (Flash, Pro)
 │
-├── api/endpoints.py               # All whitelisted API endpoints (12 endpoints)
+├── api/endpoints.py               # All whitelisted API endpoints (14 endpoints)
 ├── utils/
 │   ├── redis_index.py             # rebuild_all, _build_supplier_index, _build_item_index, doc events
 │   ├── exceptions.py              # InvoiceAutomationError hierarchy (12 exception classes)
@@ -805,16 +805,25 @@ curl '...?queue_name=INV-Q-00001'
 
 ### Review & Correction
 
+**`GET get_review_data`** — Get extracted vs matched data for the review dialog
+```bash
+curl '...?queue_name=INV-Q-00001'
+# Response: {header: {supplier: {extracted, matched, confidence}, ...}, line_items: [...], validation: {amount_mismatch, duplicate_flag}}
+```
+
 **`POST confirm_mapping`** — Accept matches, apply corrections, create Draft PI
 ```bash
 curl -X POST '...' -d '{
   "queue_name": "INV-Q-00001",
+  "header_overrides": {"supplier": "SUP-00001"},
   "corrections": [
     {"line_number": 1, "corrected_item": "ITEM-001", "reasoning": "Vendor abbreviation"}
   ]
 }'
 # Response: {"status": "success", "purchase_invoice": "ACC-PINV-2024-00001"}
 ```
+- `header_overrides.supplier`: overrides the matched supplier
+- `corrections[].reasoning`: stored in Mapping Correction Log and used as LLM context for future matching
 
 **`POST reject_invoice`** — Reject an invoice
 ```bash
@@ -830,7 +839,7 @@ curl -X POST '...' -d '{"index_type": "all"}'  # "redis" | "embeddings" | "all"
 
 ### Health & Diagnostics
 
-**`GET health_check`** (allow_guest) — System health
+**`GET health_check`** — System health (requires login)
 ```bash
 curl 'http://site/api/method/invoice_automation.api.endpoints.health_check'
 # Response: {extraction_llm: {provider, status, ...}, matching_llm: {provider, status, ...}, redis: {status}, embedding_index: {count}, queue: {pending, processing}}
@@ -857,13 +866,17 @@ curl '...'
 | Doctype | Event | Handler | Purpose |
 |---------|-------|---------|---------|
 | Supplier | on_update | `utils.redis_index.update_supplier_index` | Update Redis index for name, GSTIN, PAN |
-| Supplier | after_insert | `utils.redis_index.update_supplier_index` | Same |
+| Supplier | on_update | `matching.fuzzy_matcher.clear_master_cache` | Invalidate fuzzy matcher cache |
+| Supplier | after_insert | Same as on_update | Same |
 | Supplier | on_trash | `utils.redis_index.remove_supplier_index` | Remove from Redis |
+| Supplier | on_trash | `matching.fuzzy_matcher.clear_master_cache` | Invalidate fuzzy matcher cache |
 | Item | on_update | `utils.redis_index.update_item_index` | Update Redis for name, barcodes, MPN |
 | Item | on_update | `embeddings.index_builder.update_item_embedding` | Regenerate embedding (background) |
-| Item | after_insert | Same as on_update (both handlers) | Same |
+| Item | on_update | `matching.fuzzy_matcher.clear_master_cache` | Invalidate fuzzy matcher cache |
+| Item | after_insert | Same as on_update (all handlers) | Same |
 | Item | on_trash | `utils.redis_index.remove_item_index` | Remove from Redis |
 | Item | on_trash | `embeddings.index_builder.remove_item_embedding` | Remove from embedding index |
+| Item | on_trash | `matching.fuzzy_matcher.clear_master_cache` | Invalidate fuzzy matcher cache |
 
 ### Scheduled Jobs
 
@@ -954,7 +967,7 @@ Every exception carries: `message` (human-readable), `code` (machine-readable), 
 | "Cannot connect to Ollama" | Ollama not running (when Ollama is the configured provider) | `ollama serve` |
 | "Model not available" | Ollama model not pulled | `ollama pull qwen2.5vl:7b` |
 | LLM provider API error | API key invalid or provider unreachable | Check API key for the configured provider in Invoice Automation Settings |
-| Extraction returns empty | Scanned PDF without LlamaParse | Set `llamaparse_api_key` |
+| Extraction returns empty | Scanned PDF, no LlamaParse, no PyMuPDF | Install PyMuPDF (`pip install PyMuPDF`) for vision fallback, or set `llamaparse_api_key` |
 | Supplier not matching | GSTIN/name not in Redis | `bench execute invoice_automation.utils.redis_index.rebuild_all` |
 | Items not matching | Normalization mismatch | Check `normalize_text()` output |
 | Embedding search empty | Index not built | `bench execute invoice_automation.embeddings.index_builder.build_full_index` |

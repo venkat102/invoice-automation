@@ -13,22 +13,34 @@ after_migrate = "invoice_automation.setup.after_migrate"
 # Document Events
 doc_events = {
 	"Supplier": {
-		"on_update": "invoice_automation.utils.redis_index.update_supplier_index",
-		"after_insert": "invoice_automation.utils.redis_index.update_supplier_index",
-		"on_trash": "invoice_automation.utils.redis_index.remove_supplier_index",
+		"on_update": [
+			"invoice_automation.utils.redis_index.update_supplier_index",
+			"invoice_automation.matching.fuzzy_matcher.clear_master_cache",
+		],
+		"after_insert": [
+			"invoice_automation.utils.redis_index.update_supplier_index",
+			"invoice_automation.matching.fuzzy_matcher.clear_master_cache",
+		],
+		"on_trash": [
+			"invoice_automation.utils.redis_index.remove_supplier_index",
+			"invoice_automation.matching.fuzzy_matcher.clear_master_cache",
+		],
 	},
 	"Item": {
 		"on_update": [
 			"invoice_automation.utils.redis_index.update_item_index",
 			"invoice_automation.embeddings.index_builder.update_item_embedding",
+			"invoice_automation.matching.fuzzy_matcher.clear_master_cache",
 		],
 		"after_insert": [
 			"invoice_automation.utils.redis_index.update_item_index",
 			"invoice_automation.embeddings.index_builder.update_item_embedding",
+			"invoice_automation.matching.fuzzy_matcher.clear_master_cache",
 		],
 		"on_trash": [
 			"invoice_automation.utils.redis_index.remove_item_index",
 			"invoice_automation.embeddings.index_builder.remove_item_embedding",
+			"invoice_automation.matching.fuzzy_matcher.clear_master_cache",
 		],
 	},
 }

@@ -6,7 +6,7 @@
 flowchart TD
     A[File Upload / API Call] --> B[FileHandler: Validate & Hash]
     B --> C{File Type Detection}
-    C -->|PDF| D1[PDFParserStrategy: LlamaParse]
+    C -->|PDF| D1[PDFParserStrategy: LlamaParse → PyMuPDF → LLM Vision]
     C -->|Image| D2[ImageParserStrategy: LLM Vision]
     C -->|DOCX| D3[DOCXParserStrategy: python-docx]
     C -->|DOC| D4[DOCParserStrategy: LibreOffice → DOCX]
@@ -40,9 +40,12 @@ flowchart TD
     R -->|Any field 60-89%| T[Review Queue]
     R -->|Any field <60%| U[Manual Entry Queue]
 
-    T --> V{Reviewer Action}
-    V -->|Confirm + Corrections| W[Create Draft PI]
-    V -->|Reject| X[Rejected]
+    T --> V[Review Dialog]
+    V --> V1{Reviewer reviews extracted vs matched data}
+    V1 -->|Override supplier| V2[Apply supplier correction]
+    V1 -->|Correct line items with reasoning| V3[Apply item corrections]
+    V1 -->|Confirm & Create Invoice| W[Create Draft PI]
+    V1 -->|Reject| X[Rejected]
 
     W --> Y[Correction Memory Updated]
     Y --> Z1[Alias Created/Updated]
@@ -65,7 +68,10 @@ File Upload → Type Detection → Format Routing → Parsing → LLM Extraction
 - Detects MIME type and file category (PDF/Image/DOCX/DOC)
 
 **Step 2: Parser Selection** (`parsers/base_parser.py` factory)
-- `PDFParserStrategy` → LlamaParse API (handles native, scanned, hybrid, multi-page)
+- `PDFParserStrategy` → 3-step fallback chain:
+  1. LlamaParse API (if API key configured)
+  2. PyMuPDF text extraction (for native PDFs with selectable text)
+  3. LLM Vision (renders pages as images via PyMuPDF, sends to configured LLM — handles scanned PDFs)
 - `ImageParserStrategy` → Configured LLM provider's vision model (Ollama, OpenAI, Anthropic, or Gemini)
 - `DOCXParserStrategy` → python-docx text extraction
 - `DOCParserStrategy` → LibreOffice conversion → DOCX parser
@@ -173,15 +179,40 @@ flowchart LR
 
 | Field | When Set | By Whom |
 |-------|----------|---------|
-| source_file, file_name, file_hash, file_type | On upload | FileHandler |
+| source_file, file_name, file_hash, file_type | On save (after_insert) | InvoiceProcessingQueue controller |
 | extraction_status, extraction_method, extraction_time_ms | During extraction | ExtractionService |
 | extracted_data, extraction_confidence, document_type_detected | After extraction | ExtractionService |
+| validation_results | After extraction | ExtractionService |
 | matched_supplier, supplier_match_confidence, supplier_match_stage | After matching | MatchingPipeline |
 | matched_bill_no, matched_bill_date, matched_due_date | After matching | MatchingPipeline |
+| matched_currency, matched_total, matched_tax_template | After matching | MatchingPipeline |
+| amount_mismatch, amount_mismatch_details | After matching | amount_validator |
 | routing_decision, overall_confidence, matching_time_ms | After routing | ConfidenceScorer |
+| workflow_state = "Under Review" | After routing (confidence 60-89%) | MatchingPipeline |
 | line_items (child table) | After matching | MatchingPipeline |
-| purchase_invoice | After confirmation | confirm_mapping API |
-| processed_by | After confirmation | confirm_mapping API |
+| purchase_invoice | After review confirmation | confirm_mapping API |
+| processed_by | After review confirmation | confirm_mapping API |
+
+## Review & Correction Flow
+
+When a user clicks **Review & Create Invoice**:
+
+1. `get_review_data` API returns extracted vs matched data side-by-side
+2. A dialog displays:
+   - Validation warnings (amount mismatches, duplicates)
+   - Header comparison table (supplier, dates, amounts) with confidence indicators
+   - Line items table with extracted description, qty, rate and matched item + confidence
+   - Supplier override field
+   - Per-line correction fields (Item link + reasoning text)
+3. On confirm, `confirm_mapping` API:
+   - Applies supplier override (if changed)
+   - Processes line item corrections via `process_correction()`:
+     - Creates/updates Mapping Alias (Stage 2 learning)
+     - Logs to Mapping Correction Log (Stage 5 LLM context)
+     - Enqueues embedding index update (Stage 4 learning)
+     - Checks for conflicts with prior corrections
+   - Runs duplicate detection
+   - Creates Draft Purchase Invoice with matched/extracted data
 
 ## The Learning Curve
 

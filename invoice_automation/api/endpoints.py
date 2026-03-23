@@ -115,6 +115,105 @@ def get_extraction_result(queue_name):
 	}
 
 
+# ── Review Endpoints ──
+
+
+@frappe.whitelist()
+def get_review_data(queue_name):
+	"""Returns extracted vs matched data side-by-side for the review dialog."""
+	doc = frappe.get_doc("Invoice Processing Queue", queue_name)
+	extracted_data = json.loads(doc.extracted_data) if doc.extracted_data else {}
+
+	# Header: extracted vs matched
+	header = {
+		"supplier": {
+			"extracted": extracted_data.get("vendor_name", ""),
+			"extracted_tax_id": extracted_data.get("vendor_tax_id", ""),
+			"matched": doc.matched_supplier or "",
+			"confidence": doc.supplier_match_confidence or 0,
+			"stage": doc.supplier_match_stage or "",
+		},
+		"invoice_number": {
+			"extracted": extracted_data.get("invoice_number", ""),
+			"matched": doc.matched_bill_no or "",
+		},
+		"invoice_date": {
+			"extracted": extracted_data.get("invoice_date", ""),
+			"matched": str(doc.matched_bill_date) if doc.matched_bill_date else "",
+		},
+		"due_date": {
+			"extracted": extracted_data.get("due_date", ""),
+			"matched": str(doc.matched_due_date) if doc.matched_due_date else "",
+		},
+		"currency": {
+			"extracted": extracted_data.get("currency", ""),
+			"matched": doc.matched_currency or "",
+		},
+		"total_amount": {
+			"extracted": extracted_data.get("total_amount", ""),
+			"matched": doc.matched_total or 0,
+		},
+		"tax_template": {
+			"matched": doc.matched_tax_template or "",
+		},
+	}
+
+	# Line items: extracted vs matched
+	extracted_lines = extracted_data.get("line_items", [])
+	matched_lines = []
+	for li in doc.line_items:
+		matched_lines.append({
+			"line_number": li.line_number,
+			"extracted_description": li.extracted_description or "",
+			"extracted_qty": li.extracted_qty,
+			"extracted_rate": li.extracted_rate,
+			"extracted_amount": li.extracted_amount,
+			"extracted_hsn": li.extracted_hsn,
+			"extracted_unit": li.extracted_unit,
+			"matched_item": li.matched_item or "",
+			"match_confidence": li.match_confidence or 0,
+			"match_stage": li.match_stage or "",
+			"is_corrected": li.is_corrected,
+		})
+
+	# If matching hasn't run, build from extracted data
+	if not matched_lines and extracted_lines:
+		for i, eli in enumerate(extracted_lines):
+			matched_lines.append({
+				"line_number": i + 1,
+				"extracted_description": eli.get("description", ""),
+				"extracted_qty": eli.get("quantity") or eli.get("qty"),
+				"extracted_rate": eli.get("unit_price") or eli.get("rate"),
+				"extracted_amount": eli.get("line_total") or eli.get("amount"),
+				"extracted_hsn": eli.get("hsn_sac_code") or eli.get("hsn_code"),
+				"extracted_unit": eli.get("unit", ""),
+				"matched_item": "",
+				"match_confidence": 0,
+				"match_stage": "",
+				"is_corrected": 0,
+			})
+
+	# Validation flags
+	validation = {
+		"amount_mismatch": doc.amount_mismatch,
+		"amount_mismatch_details": doc.amount_mismatch_details,
+		"duplicate_flag": doc.duplicate_flag,
+		"duplicate_details": doc.duplicate_details,
+	}
+
+	return {
+		"name": doc.name,
+		"workflow_state": doc.workflow_state,
+		"extraction_status": doc.extraction_status,
+		"matching_status": doc.matching_status,
+		"overall_confidence": doc.overall_confidence or 0,
+		"routing_decision": doc.routing_decision or "",
+		"header": header,
+		"line_items": matched_lines,
+		"validation": validation,
+	}
+
+
 # ── Matching Endpoints ──
 
 
@@ -174,12 +273,19 @@ def get_match_results(queue_name):
 
 
 @frappe.whitelist()
-def confirm_mapping(queue_name, corrections=None):
+def confirm_mapping(queue_name, corrections=None, header_overrides=None):
 	"""Confirms mapping with optional corrections. Creates Purchase Invoice as Draft."""
 	from invoice_automation.memory.correction_handler import process_correction
 	from invoice_automation.validation.duplicate_detector import check_duplicate
 
 	queue_doc = frappe.get_doc("Invoice Processing Queue", queue_name)
+
+	# Apply header overrides (e.g. supplier correction from review dialog)
+	if header_overrides:
+		if isinstance(header_overrides, str):
+			header_overrides = json.loads(header_overrides)
+		if header_overrides.get("supplier"):
+			queue_doc.matched_supplier = header_overrides["supplier"]
 
 	if corrections:
 		if isinstance(corrections, str):
@@ -271,7 +377,7 @@ def rebuild_index(index_type="all"):
 # ── Health & Diagnostics ──
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def health_check():
 	"""Returns system health: Ollama, Redis, embedding model, index sizes."""
 	health = {}
@@ -438,6 +544,12 @@ def _run_extraction(doc):
 			if result.parsed_document:
 				doc.raw_parsed_text = result.parsed_document.text[:65000]  # Field limit
 
+			if result.validation_results:
+				doc.validation_results = json.dumps(
+					[{"passed": v.passed, "severity": v.severity, "message": v.message, "field_path": v.field_path}
+					 for v in result.validation_results], default=str
+				)
+
 			if result.warnings:
 				doc.extraction_warnings = json.dumps(
 					[w.model_dump() for w in result.warnings], default=str
@@ -445,7 +557,17 @@ def _run_extraction(doc):
 		else:
 			doc.extraction_status = "Failed"
 			doc.workflow_state = "Failed"
-			doc.processing_error = result.error or "Extraction produced no result"
+			# Include warning details in the error message for better diagnostics
+			warning_msgs = [w.message for w in result.warnings] if result.warnings else []
+			error_detail = result.error or "Extraction produced no result"
+			if warning_msgs:
+				error_detail += " | Warnings: " + "; ".join(warning_msgs)
+			doc.processing_error = error_detail
+
+			if result.warnings:
+				doc.extraction_warnings = json.dumps(
+					[w.model_dump() for w in result.warnings], default=str
+				)
 
 		doc.save(ignore_permissions=True)
 		frappe.db.commit()
@@ -513,7 +635,6 @@ def _run_matching(queue_name):
 		doc.routing_decision = result.routing_decision
 		doc.overall_confidence = result.overall_confidence
 		doc.matching_time_ms = result.processing_time_ms
-		doc.workflow_state = "Routed"
 
 		# Populate matched header fields
 		if result.supplier_match.matched:
@@ -524,6 +645,41 @@ def _run_matching(queue_name):
 		doc.matched_bill_no = invoice.invoice_number
 		doc.matched_bill_date = invoice.invoice_date
 		doc.matched_due_date = invoice.due_date
+		doc.matched_currency = invoice.currency
+		doc.matched_total = float(invoice.total_amount) if invoice.total_amount else None
+
+		# Populate matched tax template from tax matches
+		for tm in result.tax_matches:
+			if tm.matched and tm.matched_name:
+				doc.matched_tax_template = tm.matched_name
+				break
+
+		# Run amount validation
+		from invoice_automation.validation.amount_validator import validate_amounts
+
+		amount_line_items = []
+		for i, li_data in enumerate(invoice.line_items):
+			lm = result.line_item_matches[i] if i < len(result.line_item_matches) else None
+			amount_line_items.append({
+				"qty": li_data.quantity,
+				"rate": li_data.unit_price,
+				"tax_rate": li_data.tax_rate,
+			})
+
+		amount_result = validate_amounts({"total_amount": invoice.total_amount}, amount_line_items)
+		if not amount_result["is_valid"]:
+			doc.amount_mismatch = 1
+			doc.amount_mismatch_details = (
+				f"Computed: {amount_result['computed_total']}, "
+				f"Extracted: {amount_result['extracted_total']}, "
+				f"Difference: {amount_result['difference']}"
+			)
+
+		# Set workflow state based on routing decision
+		if result.routing_decision == "Review Queue":
+			doc.workflow_state = "Under Review"
+		else:
+			doc.workflow_state = "Routed"
 
 		# Populate line items child table
 		doc.line_items = []
@@ -557,22 +713,69 @@ def _run_matching(queue_name):
 
 
 def _create_purchase_invoice(queue_doc, extracted_data):
-	"""Create a Draft Purchase Invoice. Never auto-submit."""
+	"""Create a Draft Purchase Invoice from matched or extracted data. Never auto-submit."""
 	pi = frappe.new_doc("Purchase Invoice")
-	pi.supplier = queue_doc.matched_supplier
+
+	# Header — prefer matched values, fall back to extracted data
+	pi.supplier = queue_doc.matched_supplier or _resolve_supplier(extracted_data)
 	pi.bill_no = queue_doc.matched_bill_no or extracted_data.get("invoice_number")
 	pi.bill_date = queue_doc.matched_bill_date or extracted_data.get("invoice_date")
 	pi.due_date = queue_doc.matched_due_date or extracted_data.get("due_date")
 
-	for li in queue_doc.line_items:
-		pi.append("items", {
-			"item_code": li.matched_item,
-			"qty": float(li.extracted_qty) if li.extracted_qty else 1,
-			"rate": float(li.extracted_rate) if li.extracted_rate else 0,
-		})
+	currency = queue_doc.matched_currency or extracted_data.get("currency")
+	if currency:
+		pi.currency = currency
+
+	if queue_doc.matched_cost_center:
+		pi.cost_center = queue_doc.matched_cost_center
+
+	# Line items — use matched line items if available, otherwise fall back to extracted data
+	if queue_doc.line_items:
+		for li in queue_doc.line_items:
+			pi.append("items", {
+				"item_code": li.matched_item,
+				"qty": float(li.extracted_qty) if li.extracted_qty else 1,
+				"rate": float(li.extracted_rate) if li.extracted_rate else 0,
+				"description": li.extracted_description,
+			})
+	else:
+		# No matching ran — build items from extracted data
+		line_items = extracted_data.get("line_items", [])
+		for li in line_items:
+			pi.append("items", {
+				"qty": float(li.get("quantity") or li.get("qty") or 1),
+				"rate": float(li.get("unit_price") or li.get("rate") or 0),
+				"description": li.get("description", ""),
+			})
+
+	# Apply matched tax template
+	if queue_doc.matched_tax_template:
+		pi.taxes_and_charges = queue_doc.matched_tax_template
+		pi.set_taxes()
 
 	pi.flags.ignore_permissions = True
 	pi.set_missing_values()
 	pi.insert(ignore_permissions=True)
 
 	return pi
+
+
+def _resolve_supplier(extracted_data):
+	"""Try to find a Supplier from the extracted vendor name. Returns name or None."""
+	vendor_name = extracted_data.get("vendor_name")
+	if not vendor_name:
+		return None
+
+	# Exact match by supplier_name
+	supplier = frappe.db.get_value("Supplier", {"supplier_name": vendor_name}, "name")
+	if supplier:
+		return supplier
+
+	# Try tax ID match
+	tax_id = extracted_data.get("vendor_tax_id")
+	if tax_id:
+		supplier = frappe.db.get_value("Supplier", {"tax_id": tax_id}, "name")
+		if supplier:
+			return supplier
+
+	return None
