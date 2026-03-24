@@ -96,3 +96,67 @@ class ExtractedInvoice(BaseModel):
 
 # Backward-compatible alias
 ExtractedInvoiceData = ExtractedInvoice
+
+
+# Type map for dynamic Pydantic fields
+_PYDANTIC_TYPE_MAP = {
+	"String": str | None,
+	"Decimal": str | None,
+	"Date": str | None,
+	"Boolean": bool | None,
+}
+
+
+def build_dynamic_model(custom_fields=None):
+	"""Build a Pydantic model that extends ExtractedInvoice with custom fields.
+
+	Args:
+		custom_fields: List of dicts from get_custom_extraction_fields().
+
+	Returns:
+		A Pydantic model class (ExtractedInvoice or a dynamic subclass).
+	"""
+	if not custom_fields:
+		return ExtractedInvoice
+
+	enabled_fields = [f for f in custom_fields if f.get("enabled", True)]
+	if not enabled_fields:
+		return ExtractedInvoice
+
+	from pydantic import create_model
+
+	header_fields = {
+		f["field_name"]: (_PYDANTIC_TYPE_MAP.get(f.get("field_type", "String"), str | None), None)
+		for f in enabled_fields
+		if not f.get("is_line_item_field")
+	}
+
+	line_item_fields = {
+		f["field_name"]: (_PYDANTIC_TYPE_MAP.get(f.get("field_type", "String"), str | None), None)
+		for f in enabled_fields
+		if f.get("is_line_item_field")
+	}
+
+	# Extend line item model if needed
+	line_item_model = ExtractedLineItem
+	if line_item_fields:
+		line_item_model = create_model(
+			"DynamicExtractedLineItem",
+			__base__=ExtractedLineItem,
+			**line_item_fields,
+		)
+
+	# Build the dynamic invoice model
+	extra_fields = dict(header_fields)
+	if line_item_fields:
+		# Override line_items field to use the extended line item model
+		extra_fields["line_items"] = (list[line_item_model], Field(default_factory=list))
+
+	if not extra_fields:
+		return ExtractedInvoice
+
+	return create_model(
+		"DynamicExtractedInvoice",
+		__base__=ExtractedInvoice,
+		**extra_fields,
+	)

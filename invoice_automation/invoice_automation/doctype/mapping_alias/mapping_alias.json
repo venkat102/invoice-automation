@@ -16,6 +16,8 @@
   "created_from_correction",
   "correction_count",
   "last_used",
+  "last_correction_date",
+  "decay_weight",
   "is_active",
   "superseded_by"
  ],
@@ -93,6 +95,21 @@
    "fieldname": "last_used",
    "fieldtype": "Datetime",
    "label": "Last Used",
+   "read_only": 1
+  },
+  {
+   "description": "When this alias was last reinforced by a correction",
+   "fieldname": "last_correction_date",
+   "fieldtype": "Datetime",
+   "label": "Last Correction Date",
+   "read_only": 1
+  },
+  {
+   "default": "1",
+   "description": "Recency weight (1.0 = fresh, decays to 0.5 over time). Applied to confidence during matching.",
+   "fieldname": "decay_weight",
+   "fieldtype": "Float",
+   "label": "Decay Weight",
    "read_only": 1
   },
   {

@@ -1,0 +1,100 @@
+{
+ "actions": [],
+ "autoname": "field:strategy_name",
+ "creation": "2024-01-01 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "track_changes": 1,
+ "field_order": [
+  "strategy_name",
+  "strategy_class",
+  "enabled",
+  "column_break_config",
+  "priority",
+  "applies_to",
+  "max_confidence",
+  "section_break_settings",
+  "settings_json"
+ ],
+ "fields": [
+  {
+   "fieldname": "strategy_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Strategy Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "description": "Dotted Python path to the strategy class (e.g., invoice_automation.matching.vendor_sku_matcher.VendorSKUMatcher)",
+   "fieldname": "strategy_class",
+   "fieldtype": "Data",
+   "label": "Strategy Class",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "column_break_config",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Lower priority executes first (e.g., 10=Exact, 20=Alias, 50=LLM)",
+   "fieldname": "priority",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Priority",
+   "reqd": 1
+  },
+  {
+   "default": "Both",
+   "fieldname": "applies_to",
+   "fieldtype": "Select",
+   "label": "Applies To",
+   "options": "Supplier\nItem\nBoth"
+  },
+  {
+   "default": "100",
+   "description": "Maximum confidence this strategy can assign",
+   "fieldname": "max_confidence",
+   "fieldtype": "Float",
+   "label": "Max Confidence"
+  },
+  {
+   "fieldname": "section_break_settings",
+   "fieldtype": "Section Break",
+   "label": "Strategy Settings"
+  },
+  {
+   "description": "JSON object with strategy-specific configuration",
+   "fieldname": "settings_json",
+   "fieldtype": "JSON",
+   "label": "Settings JSON"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2024-01-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Invoice Automation",
+ "name": "Matching Strategy",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "priority",
+ "sort_order": "ASC",
+ "states": []
+}

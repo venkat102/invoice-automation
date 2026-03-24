@@ -124,11 +124,21 @@ class ExtractionService:
 
 	def _extract_with_llm(self, document_text: str) -> ExtractedInvoice:
 		"""Send text to the configured LLM provider and parse the structured JSON response."""
+		from invoice_automation.extraction.prompt_templates import (
+			build_dynamic_prompt,
+			get_custom_extraction_fields,
+		)
+		from invoice_automation.extraction.schema import build_dynamic_model
 		from invoice_automation.llm import get_llm_provider
 
 		provider = get_llm_provider("extraction")
 
-		prompt = EXTRACTION_PROMPT.format(
+		# Load custom extraction fields and build dynamic prompt/schema
+		custom_fields = get_custom_extraction_fields()
+		extraction_prompt = build_dynamic_prompt(custom_fields)
+		model_class = build_dynamic_model(custom_fields)
+
+		prompt = extraction_prompt.format(
 			document_text=document_text[:8000],  # Limit to avoid token overflow
 		)
 
@@ -148,7 +158,7 @@ class ExtractionService:
 					cleaned_warnings.append({"category": "llm_warning", "message": w, "severity": "info"})
 			data["warnings"] = cleaned_warnings
 
-		return ExtractedInvoice(**data)
+		return model_class(**data)
 
 	def _normalize(self, invoice: ExtractedInvoice):
 		"""Apply all normalizers to the extracted invoice in-place."""
@@ -178,6 +188,28 @@ class ExtractionService:
 
 		# Add normalization warnings
 		invoice.warnings.extend(warnings)
+
+		# Apply normalizers to custom extraction fields
+		from invoice_automation.extraction.prompt_templates import get_custom_extraction_fields
+
+		custom_fields = get_custom_extraction_fields()
+		for cf in custom_fields:
+			if not cf.get("enabled") or cf.get("normalizer", "None") == "None":
+				continue
+			field_name = cf["field_name"]
+			value = getattr(invoice, field_name, None)
+			if not value:
+				continue
+			normalizer_type = cf["normalizer"]
+			if normalizer_type == "Text":
+				setattr(invoice, field_name, normalize_text(value) or value)
+			elif normalizer_type == "Date":
+				normalized, warning = normalize_date(value)
+				setattr(invoice, field_name, normalized)
+				if warning:
+					warnings.append(warning)
+			elif normalizer_type == "Currency":
+				setattr(invoice, field_name, normalize_currency(value) or value)
 
 		# Excerpt for debugging
 		if not invoice.raw_text_excerpt and invoice.vendor_name:

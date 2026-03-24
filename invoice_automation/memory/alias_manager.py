@@ -35,6 +35,8 @@ class AliasManager:
 			}
 			if from_correction:
 				updates["created_from_correction"] = 1
+				updates["last_correction_date"] = frappe.utils.now_datetime()
+				updates["decay_weight"] = 1.0
 
 			# If canonical_name changed, mark old one as superseded
 			if existing.canonical_name != canonical_name:
@@ -54,6 +56,9 @@ class AliasManager:
 			alias_doc.correction_count = 1
 			alias_doc.last_used = frappe.utils.now_datetime()
 			alias_doc.is_active = 1
+			alias_doc.decay_weight = 1.0
+			if from_correction:
+				alias_doc.last_correction_date = frappe.utils.now_datetime()
 			alias_doc.insert(ignore_permissions=True)
 			alias_name = alias_doc.name
 
@@ -118,3 +123,28 @@ class AliasManager:
 		if canonical:
 			self._sync_to_redis(composite_key, canonical)
 		return canonical
+
+
+def apply_decay_weights():
+	"""Daily scheduled job: decay alias weights based on time since last correction.
+
+	decay_weight = max(0.5, 1.0 - 0.005 * days_since_last_correction)
+	Aliases unused for 100+ days decay to minimum 0.5 weight.
+	"""
+	from frappe.utils import now_datetime, date_diff
+
+	aliases = frappe.get_all(
+		"Mapping Alias",
+		filters={"is_active": 1, "last_correction_date": ["is", "set"]},
+		fields=["name", "last_correction_date"],
+	)
+
+	now = now_datetime()
+	for alias in aliases:
+		days = date_diff(now, alias.last_correction_date)
+		weight = max(0.5, 1.0 - 0.005 * days)
+		frappe.db.set_value(
+			"Mapping Alias", alias.name, "decay_weight", weight, update_modified=False
+		)
+
+	frappe.db.commit()

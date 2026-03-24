@@ -1,5 +1,80 @@
 # Invoice Automation - User Guide
 
+## How to Read This Documentation
+
+We have 11 docs. You don't need to read all of them — pick the path that matches you.
+
+### Path A: "I only know Python, I'm completely new to Frappe, ERPNext, and AI"
+
+Read in this exact order:
+
+| # | Document | What You'll Learn | Time |
+|---|----------|------------------|------|
+| 1 | **[Frappe Basics](FRAPPE_BASICS.md)** | How Frappe works if you know Python/Django — DocTypes, APIs, hooks, database, background jobs, JS patterns, directory structure | 15 min |
+| 2 | **[AI Concepts](AI_CONCEPTS.md)** | LLMs, prompts, vision models, JSON mode, embeddings, semantic search, fuzzy matching, confidence scoring — all from scratch | 20 min |
+| 3 | **[Glossary](GLOSSARY.md)** | Quick-reference definitions for every term: Frappe concepts, ERPNext business concepts (Supplier, Item, Purchase Invoice, GSTIN, HSN), and system-specific terms (Mapping Alias, Decay Weight, etc.) | 5 min |
+| 4 | **[Example Walkthrough](EXAMPLE_WALKTHROUGH.md)** | One real invoice traced step-by-step: upload → extraction → each matching strategy's decision → review → correction → what the system learns | 10 min |
+| 5 | **[Setup Guide](SETUP_GUIDE.md)** | Install the app, configure LLM providers, set thresholds, verify health | 10 min |
+| 6 | **This guide** (below) | The full user workflow: uploading, reviewing, correcting, and how the system learns | 15 min |
+
+After these 6, you'll understand everything. Then go deeper as needed with Path D.
+
+### Path B: "I know Frappe/ERPNext, just need to set up and use the app"
+
+| # | Document | Why |
+|---|----------|-----|
+| 1 | **[Setup Guide](SETUP_GUIDE.md)** | Install, configure providers, set thresholds |
+| 2 | **This guide** (below) | Full workflow from upload to Purchase Invoice |
+| 3 | **[Example Walkthrough](EXAMPLE_WALKTHROUGH.md)** | See a concrete invoice processed end-to-end |
+| 4 | **[System Flow](SYSTEM_FLOW.md)** | Visual diagrams of the pipeline |
+
+### Path C: "I'm a reviewer who processes invoices daily"
+
+| # | Document | Why |
+|---|----------|-----|
+| 1 | **This guide** → [Uploading Invoices](#uploading-invoices) | How to upload |
+| 2 | **This guide** → [Reviewing and Correcting Mappings](#reviewing-and-correcting-mappings) | The review dialog — where you'll spend most time |
+| 3 | **This guide** → [Why Reasoning Notes Matter](#why-reasoning-notes-matter) | Your corrections directly improve the system |
+| 4 | **[Example Walkthrough](EXAMPLE_WALKTHROUGH.md)** | See exactly what happens with a real invoice |
+
+### Path D: "I'm a developer or admin going deeper"
+
+| # | Document | Why |
+|---|----------|-----|
+| 1 | **[System Flow](SYSTEM_FLOW.md)** | Visual diagrams of all 3 subsystems |
+| 2 | **[Technical Documentation](TECHNICAL.md)** | Architecture, all 14 API endpoints, extension guide, troubleshooting |
+| 3 | **[Permissions](PERMISSIONS.md)** | Role matrix — who can do what |
+| 4 | **[Deployment Guide](DEPLOYMENT.md)** | Production checklist, monitoring, scaling, backups |
+| 5 | **[Development Guide](DEVELOPMENT.md)** | Dev setup, running tests, adding strategies/providers/parsers, debugging |
+
+### Quick Concept Map
+
+Before diving in, here's how the key pieces fit together:
+
+```
+Upload Invoice ──→ Extract Data (AI reads the PDF/image)
+                        │
+                        ▼
+                   Match to ERPNext (8 strategies try to find the right Supplier, Items, Tax Template)
+                        │
+                        ▼
+                   Route by Confidence
+                   ├── ≥90% → Auto-create Draft PI
+                   ├── 60-89% → Review Queue (you review and correct)
+                   └── <60% → Manual Entry
+                        │
+                        ▼
+                   Your Corrections Teach the System
+                   ├── Aliases → instant match next time
+                   ├── Vendor SKU Mapping → item code remembered
+                   ├── Supplier Item Catalog → price patterns learned
+                   └── Reasoning notes → AI uses your logic for similar items
+```
+
+The system gets smarter with every correction. Most items that need review today will match automatically within weeks.
+
+---
+
 ## Overview
 
 Invoice Automation processes vendor invoices automatically by:
@@ -52,7 +127,7 @@ The Invoice Processing Queue form shows contextual action buttons based on the c
 | Button | When Visible | What It Does |
 |--------|-------------|--------------|
 | **Review & Create Invoice** | Extraction completed, no PI created yet | Opens the review dialog (see below) |
-| **Trigger Matching** | Extraction done, matching pending/failed | Re-runs the 5-stage matching pipeline |
+| **Trigger Matching** | Extraction done, matching pending/failed | Re-runs the matching pipeline through all enabled strategies |
 | **Retry Extraction** | Extraction failed | Creates a new queue entry and re-processes the file |
 | **Reject** | Invoice is under review/routed | Marks the invoice as rejected with a reason |
 | **View Purchase Invoice** | PI has been created | Navigates to the linked Purchase Invoice |
@@ -71,54 +146,105 @@ The **Overall Confidence** is the *lowest* confidence across all fields — one 
 
 ## Reviewing and Correcting Mappings
 
-When an invoice is ready for review, click the **Review & Create Invoice** button. This opens a dialog showing:
+When an invoice is ready for review, click the **Review & Create Invoice** button. This opens a two-panel review dialog.
 
-### Review Dialog
+### Review Dialog Layout
 
-The review dialog has three sections:
+The dialog opens near-fullscreen (95% viewport width) with two panels side by side:
 
-**1. Validation Warnings** (top)
-- Amount mismatch alerts (computed total vs extracted total)
-- Duplicate invoice warnings
+```
+┌───────────────────────┬─────────────────────────────────────┐
+│                       │  Warnings (if any)                  │
+│   Invoice Preview     │  Header Details (compact grid)      │
+│   (PDF or image)      │  Line Items (cards, sorted)         │
+│                       │                                     │
+│   [Hide Preview]      │  Inline corrections per item        │
+├───────────────────────┴─────────────────────────────────────┤
+│  2 need review │ 1 change │ [Save Only] [Confirm & Create]  │
+└─────────────────────────────────────────────────────────────┘
+```
 
-**2. Header Comparison Table**
+**Left panel — Invoice Preview**
+- Shows the original invoice file (PDF via iframe, or image preview)
+- Toggle "Hide" / "Show Preview" button to collapse and give more space to the data panel
+- Lets you reference the original document while reviewing matches
 
-A side-by-side view of extracted vs matched data with confidence scores:
+**Right panel — Review Data**
 
-| Field | Extracted | Matched | Confidence |
-|-------|-----------|---------|------------|
-| Supplier | Vendor name from invoice | Matched ERPNext Supplier | 95% |
-| Invoice No. | From invoice | Mapped value | - |
-| Invoice Date | From invoice | Mapped value | - |
-| Due Date | From invoice | Mapped value | - |
-| Currency | From invoice | Mapped value | - |
-| Total Amount | From invoice | Mapped value | - |
-| Tax Template | - | Matched template | - |
+The right panel has three areas, scrollable:
 
-Confidence scores are color-coded: green (90%+), orange (60-89%), red (below 60%).
+### 1. Warnings
 
-If the supplier is wrong, use the **Supplier Override** field below the table to select the correct one.
+Color-coded alerts at the top:
+- **Yellow** — Amount mismatch (computed total vs extracted total)
+- **Red** — Duplicate invoice warning
+- **Blue** — Extraction warnings (OCR issues, ambiguous dates, etc.)
 
-**3. Line Items Table**
+### 2. Header Details
 
-Each extracted line item shows:
-- **Extracted data**: description, qty, rate, amount, HSN code
-- **Matched Item**: the ERPNext Item the system matched it to
-- **Confidence**: how sure the system is about the match
-- **Stage**: which matching stage found it (Exact, Alias, Fuzzy, Embedding, LLM)
+A compact two-column grid showing all header fields:
+
+| Field | What's Shown |
+|-------|-------------|
+| Supplier | Matched name + confidence badge + tax ID |
+| Invoice # | Extracted value |
+| Date / Due Date | Extracted values |
+| Currency / Total | Extracted values |
+| Tax Template | Matched template + confidence badge |
+| Cost Center | Matched cost center |
+
+Editable fields (Supplier, Tax Template, Cost Center) show a pencil icon on hover. Click the pencil to reveal the **Header Overrides** area with Link fields and reasoning inputs for each.
+
+All header corrections create aliases and correction logs, so the system learns from them for future invoices.
+
+### 3. Line Items (Sorted by Attention)
+
+Line items are displayed as **interactive cards**, sorted so items needing attention appear first:
+
+- **Red left border** — unmatched items (no match found)
+- **Orange left border** — low/medium confidence (below 90%)
+- **Blue left border** — items you've modified in this session
+- **No colored border** — high confidence matches (90%+)
+
+Items below 90% confidence are **auto-expanded** so you can review them immediately. High-confidence items are collapsed by default — click to expand.
+
+**Each card shows:**
+
+**Collapsed view** — one-line summary:
+- Line number, description (truncated), qty, rate, amount, matched item, confidence badge, matching stage pill
+
+**Expanded view** — click to toggle:
+- **Full extracted details grid**: description, quantity, unit price, amount, UOM, HSN/SAC code, item code, SKU, tax rate, tax amount, discount
+- **Current match**: matched item name with confidence and stage
+- **Correction area** (blue highlight): Item link field (with autocomplete) + reasoning text field
 
 ### Making Corrections
 
-Below the line items table, each line has:
-- **Item field**: Change the matched Item if the system got it wrong
-- **Reasoning field**: Explain *why* this correction is right — this teaches the system!
+Corrections happen **inline** — directly inside each line item card:
+
+1. **Click** a line item card to expand it (low-confidence items are already expanded)
+2. In the blue "Correct this match" area, use the **Item** link field to select the correct item
+3. Add a **Reasoning** note explaining why — this teaches the system
+4. The card gets a blue left border indicating it's been modified
+5. The **summary bar** at the bottom updates the change count in real-time
+
+For header corrections, click the pencil icon next to Supplier, Tax Template, or Cost Center to reveal override fields.
+
+### Summary Bar
+
+A sticky bar at the bottom of the dialog shows:
+- **Attention count** — how many items still need review (below 90%)
+- **Change count** — how many corrections you've made in this session
+- **Action buttons** — "Save Corrections Only" and "Confirm & Create Invoice"
 
 ### Confirming
 
 Click **Confirm & Create Invoice** to:
-1. Save your corrections (aliases created, correction log updated, embeddings re-indexed)
+1. Save your corrections (aliases created, correction log updated, embeddings re-indexed, catalog and SKU mappings updated)
 2. Check for duplicate invoices
 3. Create a **Draft Purchase Invoice** with all the mapped data
+
+Click **Save Corrections Only** to teach the system without creating a Purchase Invoice.
 
 The Purchase Invoice is always created as a Draft — it is never auto-submitted.
 
@@ -128,6 +254,21 @@ When you add a reasoning note, you're teaching the system:
 - The note gets stored in the Mapping Correction Log
 - Similar items from the same supplier will reference your reasoning
 - The AI matching engine uses your notes as context for better decisions
+
+### What the System Learns from Corrections
+
+Each correction triggers multiple learning mechanisms:
+
+| What You Correct | What the System Learns |
+|---|---|
+| **Line item** | Alias mapping, embedding update, Supplier Item Catalog entry, Vendor SKU mapping (if item code present) |
+| **Supplier** | Alias mapping (vendor name → Supplier), correction log |
+| **Tax Template** | Alias mapping (supplier → Tax Template), correction log |
+| **Cost Center** | Alias mapping (supplier → Cost Center), correction log |
+
+The **Supplier Item Catalog** tracks which items each supplier sells along with price statistics (average, min, max rate). This data feeds the Purchase History matching strategy.
+
+The **Vendor SKU Mapping** remembers vendor-specific item codes printed on invoices. Next time the same vendor sends an invoice with the same item code, it's matched instantly at 97% confidence.
 
 ## Handling Duplicates
 
@@ -171,7 +312,7 @@ When you select a provider, the form automatically shows the relevant API key an
 ## FAQ
 
 **Q: Why did the system match this wrong?**
-A: The system uses 5 matching strategies. Sometimes vendor descriptions differ from your Item names. Correcting it once creates an alias that catches it next time.
+A: The system uses up to 8 matching strategies. Sometimes vendor descriptions differ from your Item names. Correcting it once creates an alias that catches it next time.
 
 **Q: How long until it learns my corrections?**
 A: Immediately. An alias is created on correction and used for the very next invoice from that supplier. Embedding-based learning updates within minutes.
@@ -187,6 +328,18 @@ A: Yes, but disabled by default. Enable in **Invoice Automation Settings** → *
 
 **Q: What file types are supported?**
 A: PDF (native and scanned), PNG, JPG, JPEG, TIFF, WEBP, DOCX, and DOC. Configurable in settings.
+
+**Q: What matching strategies are available?**
+A: There are 8 pluggable strategies: Exact, Vendor SKU, Alias, Purchase History, Fuzzy, HSN Filter, Embedding, and LLM. You can enable/disable and reorder them in **Matching Strategy** list. Purchase History and HSN Filter are disabled by default — enable them once you have enough data.
+
+**Q: What is the Supplier Item Catalog?**
+A: It tracks which items each supplier has sold to you, along with price statistics. It's auto-populated from Purchase Invoice submissions and human corrections. The Purchase History matching strategy uses this catalog to narrow candidates.
+
+**Q: How does price validation work?**
+A: After matching an item, the system checks the extracted rate against the historical average from the Supplier Item Catalog. If the rate is within 15% of average, confidence gets a +5% boost. If it's >50% off, confidence gets a -10% penalty. This helps catch wrong matches where the price doesn't make sense.
+
+**Q: Can I add custom fields to extract from invoices?**
+A: Yes. Go to **Invoice Automation Settings** → **Custom Extraction Fields**. Add fields with a name, type, and LLM description. Custom fields are injected into the extraction prompt and can be mapped to ERPNext fields on the Purchase Invoice.
 
 **Q: What if the LLM provider is not running or misconfigured?**
 A: Extraction will fail gracefully with a clear error. Use the **Health Check** endpoint or check the `processing_error` field on the queue record. Ensure your configured provider is running and API keys are set in **Invoice Automation Settings**.

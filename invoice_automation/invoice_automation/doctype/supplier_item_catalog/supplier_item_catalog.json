@@ -1,0 +1,128 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2024-01-01 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "track_changes": 0,
+ "field_order": [
+  "supplier",
+  "item",
+  "item_group",
+  "column_break_rates",
+  "avg_rate",
+  "last_rate",
+  "min_rate",
+  "max_rate",
+  "section_break_meta",
+  "occurrence_count",
+  "last_invoice_date",
+  "hsn_code"
+ ],
+ "fields": [
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Supplier",
+   "options": "Supplier",
+   "reqd": 1
+  },
+  {
+   "fieldname": "item",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "item_group",
+   "fieldtype": "Link",
+   "label": "Item Group",
+   "options": "Item Group"
+  },
+  {
+   "fieldname": "column_break_rates",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "avg_rate",
+   "fieldtype": "Currency",
+   "label": "Average Rate",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_rate",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Last Rate",
+   "read_only": 1
+  },
+  {
+   "fieldname": "min_rate",
+   "fieldtype": "Currency",
+   "label": "Min Rate",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_rate",
+   "fieldtype": "Currency",
+   "label": "Max Rate",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_meta",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "occurrence_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Occurrence Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_invoice_date",
+   "fieldtype": "Date",
+   "label": "Last Invoice Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "hsn_code",
+   "fieldtype": "Data",
+   "label": "HSN Code"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2024-01-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Invoice Automation",
+ "name": "Supplier Item Catalog",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Accounts User"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "unique_together": [["supplier", "item"]]
+}

@@ -5,10 +5,12 @@ AI-powered invoice processing for ERPNext. Extracts data from uploaded invoices 
 ### Key Features
 
 - **Multi-format extraction**: PDF (LlamaParse / PyMuPDF / LLM vision fallback for scanned docs), images (LLM vision), DOCX, DOC
-- **5-stage matching pipeline**: Exact lookup, alias lookup, fuzzy matching, embedding search, LLM fallback
-- **Review dialog**: Side-by-side view of extracted vs matched data with inline corrections and reasoning
-- **Correction memory**: Learns from human corrections — aliases, embeddings, and reviewer reasoning
-- **Confidence-based routing**: Auto-create, review queue, or manual entry based on match confidence
+- **Pluggable matching pipeline**: 8 matching strategies (Exact, Vendor SKU, Alias, Purchase History, Fuzzy, HSN Filter, Embedding, LLM) — enable/disable and reorder via config
+- **Review dialog**: Side-by-side view of extracted vs matched data with inline corrections and reasoning for supplier, tax template, cost center, and line items
+- **Correction memory**: Learns from human corrections — aliases, embeddings, vendor SKU mappings, supplier-item catalog, and reviewer reasoning
+- **Price validation**: Compares extracted rates against historical price data to boost or penalize match confidence
+- **Configurable extraction**: Add custom fields to the extraction schema via UI — no code changes needed
+- **Confidence-based routing**: Auto-create, review queue, or manual entry based on match confidence with alias recency weighting
 - **Multi-provider LLM support**: Ollama (free/local), OpenAI (ChatGPT), Anthropic (Claude), Google Gemini
 
 ### Quick Start
@@ -40,13 +42,32 @@ All configuration is managed through a single DocType: **Invoice Automation Sett
 
 ### Documentation
 
-- [Technical Documentation](docs/TECHNICAL.md) — architecture, API reference, configuration
-- [System Flow](docs/SYSTEM_FLOW.md) — pipeline diagrams and data flow
-- [User Guide](docs/USER_GUIDE.md) — how to upload, review, and correct invoices
+**Only know Python? Start here (in order):**
+
+| # | Document | What You'll Learn |
+|---|----------|------------------|
+| 1 | **[Frappe Basics](docs/FRAPPE_BASICS.md)** | How Frappe maps to Python/Django concepts you already know |
+| 2 | **[AI Concepts](docs/AI_CONCEPTS.md)** | LLMs, embeddings, semantic search, prompt engineering — from scratch |
+| 3 | **[Glossary](docs/GLOSSARY.md)** | Every term defined: Frappe, ERPNext, and system-specific |
+| 4 | **[Example Walkthrough](docs/EXAMPLE_WALKTHROUGH.md)** | One invoice traced step-by-step through the entire pipeline |
+| 5 | **[Setup Guide](docs/SETUP_GUIDE.md)** | Install, configure, verify |
+| 6 | **[User Guide](docs/USER_GUIDE.md)** | Full workflow: upload, review, correct |
+
+**Going deeper:**
+
+| # | Document | What You'll Learn |
+|---|----------|------------------|
+| 7 | **[System Flow](docs/SYSTEM_FLOW.md)** | Visual diagrams of the 3 subsystems |
+| 8 | **[Technical Docs](docs/TECHNICAL.md)** | Architecture, API reference, extension guide |
+| 9 | **[Permissions](docs/PERMISSIONS.md)** | Roles and access control |
+| 10 | **[Deployment](docs/DEPLOYMENT.md)** | Production checklist, monitoring, scaling |
+| 11 | **[Development](docs/DEVELOPMENT.md)** | Dev setup, tests, adding features |
+
+> Already know Frappe/ERPNext? Skip 1-3, start at the [User Guide](docs/USER_GUIDE.md) — it has reading paths for every role.
 
 ### Contributing
 
-This app uses `pre-commit` for code formatting and linting. Please [install pre-commit](https://pre-commit.com/#installation) and enable it for this repository:
+See the **[Development Guide](docs/DEVELOPMENT.md)** for full setup instructions. Quick version:
 
 ```bash
 cd apps/invoice_automation

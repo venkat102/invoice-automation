@@ -98,3 +98,104 @@ Return a JSON object with EXACTLY these fields (use null for missing data, empty
 }}
 
 IMPORTANT: Return ONLY the JSON object. No markdown, no explanation, no code fences."""
+
+
+# Type hints for custom field JSON representation
+_FIELD_TYPE_MAP = {
+	"String": '"string or null"',
+	"Decimal": '"decimal string or null"',
+	"Date": '"YYYY-MM-DD or null"',
+	"Boolean": "true/false/null",
+}
+
+
+def build_dynamic_prompt(custom_fields=None):
+	"""Build the extraction prompt with optional custom fields injected.
+
+	Args:
+		custom_fields: List of dicts with keys: field_name, field_label, field_type,
+					   is_line_item_field, description_for_llm, enabled.
+
+	Returns:
+		The extraction prompt string (with {document_text} placeholder).
+	"""
+	if not custom_fields:
+		return EXTRACTION_PROMPT
+
+	# Filter to enabled fields only
+	enabled_fields = [f for f in custom_fields if f.get("enabled", True)]
+	if not enabled_fields:
+		return EXTRACTION_PROMPT
+
+	header_fields = [f for f in enabled_fields if not f.get("is_line_item_field")]
+	line_item_fields = [f for f in enabled_fields if f.get("is_line_item_field")]
+
+	# Build custom header fields JSON snippet
+	header_snippet = ""
+	if header_fields:
+		lines = []
+		for f in header_fields:
+			type_hint = _FIELD_TYPE_MAP.get(f.get("field_type", "String"), '"string or null"')
+			comment = ""
+			if f.get("description_for_llm"):
+				comment = f"  // {f['description_for_llm']}"
+			lines.append(f'  "{f["field_name"]}": {type_hint},{comment}')
+		header_snippet = "\n".join(lines)
+
+	# Build custom line item fields JSON snippet
+	line_item_snippet = ""
+	if line_item_fields:
+		lines = []
+		for f in line_item_fields:
+			type_hint = _FIELD_TYPE_MAP.get(f.get("field_type", "String"), '"string or null"')
+			comment = ""
+			if f.get("description_for_llm"):
+				comment = f"  // {f['description_for_llm']}"
+			lines.append(f'      "{f["field_name"]}": {type_hint},{comment}')
+		line_item_snippet = "\n".join(lines)
+
+	# Inject custom fields into the base prompt
+	prompt = EXTRACTION_PROMPT
+
+	# Insert header fields before "notes"
+	if header_snippet:
+		prompt = prompt.replace(
+			'  "notes": "string or null",',
+			f'{header_snippet}\n\n  "notes": "string or null",',
+		)
+
+	# Insert line item fields before the closing of line_items
+	if line_item_snippet:
+		prompt = prompt.replace(
+			'      "item_code": "string or null"',
+			f'      "item_code": "string or null",\n{line_item_snippet}',
+		)
+
+	return prompt
+
+
+def get_custom_extraction_fields():
+	"""Load custom extraction fields from Invoice Automation Settings."""
+	import frappe
+
+	try:
+		settings = frappe.get_single("Invoice Automation Settings")
+		if not settings.custom_extraction_fields:
+			return []
+
+		return [
+			{
+				"field_name": f.field_name,
+				"field_label": f.field_label,
+				"field_type": f.field_type or "String",
+				"is_line_item_field": f.is_line_item_field,
+				"target_doctype": f.target_doctype,
+				"target_field": f.target_field,
+				"normalizer": f.normalizer,
+				"description_for_llm": f.description_for_llm,
+				"enabled": f.enabled,
+			}
+			for f in settings.custom_extraction_fields
+		]
+	except Exception:
+		return []

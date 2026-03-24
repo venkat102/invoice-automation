@@ -166,3 +166,20 @@ class ExactMatcher:
 				details=result.get("details", {}),
 			)
 		return MatchResult(matched=False, doctype="Purchase Taxes and Charges Template", stage="Exact")
+
+
+class ExactMatcherStrategy:
+	"""Pluggable strategy wrapper for ExactMatcher."""
+
+	name = "Exact"
+	applies_to = ["Supplier", "Item"]
+
+	def __init__(self, config=None):
+		self.config = config or {}
+		self._matcher = ExactMatcher()
+
+	def match_supplier(self, extracted_data):
+		return self._matcher.match_supplier(extracted_data)
+
+	def match_item(self, line_item, supplier=None):
+		return self._matcher.match_item(line_item, supplier)

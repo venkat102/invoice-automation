@@ -1,0 +1,104 @@
+{
+ "actions": [],
+ "creation": "2024-01-01 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "istable": 1,
+ "field_order": [
+  "field_name",
+  "field_label",
+  "field_type",
+  "is_line_item_field",
+  "column_break_mapping",
+  "target_doctype",
+  "target_field",
+  "normalizer",
+  "enabled",
+  "section_break_llm",
+  "description_for_llm"
+ ],
+ "fields": [
+  {
+   "description": "Machine key (e.g., project_code). Must be a valid Python identifier.",
+   "fieldname": "field_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Field Name",
+   "reqd": 1
+  },
+  {
+   "description": "Human-readable label (e.g., Project Code)",
+   "fieldname": "field_label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Field Label",
+   "reqd": 1
+  },
+  {
+   "default": "String",
+   "fieldname": "field_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Field Type",
+   "options": "String\nDecimal\nDate\nBoolean"
+  },
+  {
+   "default": "0",
+   "description": "If checked, this field is extracted per line item. Otherwise it's a header-level field.",
+   "fieldname": "is_line_item_field",
+   "fieldtype": "Check",
+   "label": "Is Line Item Field"
+  },
+  {
+   "fieldname": "column_break_mapping",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "target_doctype",
+   "fieldtype": "Select",
+   "label": "Target Doctype",
+   "options": "\nPurchase Invoice\nPurchase Invoice Item"
+  },
+  {
+   "description": "ERPNext field name to map this value to (e.g., project, cost_center)",
+   "fieldname": "target_field",
+   "fieldtype": "Data",
+   "label": "Target Field"
+  },
+  {
+   "default": "None",
+   "fieldname": "normalizer",
+   "fieldtype": "Select",
+   "label": "Normalizer",
+   "options": "None\nText\nDate\nCurrency\nDecimal"
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "section_break_llm",
+   "fieldtype": "Section Break"
+  },
+  {
+   "description": "Instructions for the LLM on how to extract this field (e.g., 'The internal project code, usually a 6-digit number near the top of the invoice')",
+   "fieldname": "description_for_llm",
+   "fieldtype": "Small Text",
+   "label": "Description for LLM"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2024-01-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Invoice Automation",
+ "name": "Extraction Field",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}

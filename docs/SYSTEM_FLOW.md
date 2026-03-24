@@ -24,16 +24,22 @@ flowchart TD
     I --> J[Validation: amounts, dates, line items]
     J --> K[Extraction Complete → Stored on Queue]
 
-    K --> L[Matching Pipeline]
-    L --> M[Stage 1: Exact Lookup]
-    M -->|Match ≥90%| R[Route]
-    M -->|No match| N[Stage 2: Alias Lookup]
+    K --> L[Pluggable Matching Pipeline]
+    L --> M[Strategy 1: Exact Lookup]
+    M -->|Match| R[Price Validation → Route]
+    M -->|No match| M2[Strategy 2: Vendor SKU]
+    M2 -->|Match| R
+    M2 -->|No match| N[Strategy 3: Alias Lookup]
     N -->|Match| R
-    N -->|No match| O[Stage 3: Fuzzy Match]
+    N -->|No match| N2[Strategy 4: Purchase History]
+    N2 -->|Match| R
+    N2 -->|No match| O[Strategy 5: Fuzzy Match]
     O -->|Match| R
-    O -->|No match| P[Stage 4: Embedding Search]
+    O -->|No match| O2[Strategy 6: HSN Filter]
+    O2 -->|Match| R
+    O2 -->|No match| P[Strategy 7: Embedding Search]
     P -->|Match| R
-    P -->|No match| Q[Stage 5: LLM Match]
+    P -->|No match| Q[Strategy 8: LLM Match]
     Q --> R
 
     R -->|All fields ≥90%| S[Auto Create Draft PI]
@@ -42,15 +48,17 @@ flowchart TD
 
     T --> V[Review Dialog]
     V --> V1{Reviewer reviews extracted vs matched data}
-    V1 -->|Override supplier| V2[Apply supplier correction]
-    V1 -->|Correct line items with reasoning| V3[Apply item corrections]
+    V1 -->|Override supplier/tax template/cost center| V2[Apply header corrections → create aliases]
+    V1 -->|Correct line items with reasoning| V3[Apply item corrections → aliases + catalog + SKU]
     V1 -->|Confirm & Create Invoice| W[Create Draft PI]
     V1 -->|Reject| X[Rejected]
 
     W --> Y[Correction Memory Updated]
-    Y --> Z1[Alias Created/Updated]
+    Y --> Z1[Alias Created/Updated with Recency Weight]
     Y --> Z2[Embedding Index Updated]
     Y --> Z3[Correction Log Recorded]
+    Y --> Z4[Supplier Item Catalog Updated]
+    Y --> Z5[Vendor SKU Mapping Updated]
 ```
 
 ## Subsystem 1: Extraction Engine
@@ -101,26 +109,46 @@ File Upload → Type Detection → Format Routing → Parsing → LLM Extraction
 - Zero-value invoice warning
 - Missing critical fields
 
-## Subsystem 2: The 5-Stage Matching Pipeline
+## Subsystem 2: Pluggable Matching Pipeline
 
-### Stage 1: Normalization + Exact Lookup (~0ms)
+The matching pipeline loads strategies dynamically from the **Matching Strategy** doctype. Strategies are executed in priority order (lower = first). Each can be enabled/disabled and reordered without code changes. Falls back to hardcoded defaults if no strategy records exist.
+
+### Strategy 1: Exact Lookup (Priority 10, ~0ms)
 - GSTIN lookup → 100% confidence
 - PAN (from GSTIN chars 3-12) → 98% confidence
 - Normalized name → 95% confidence
 - Uses Redis index for O(1) lookups
 
-### Stage 2: Context-Aware Alias Lookup (~1ms)
-- Supplier-specific: `{supplier}:{normalized_text}:{doctype}` → 99% confidence
-- Supplier-agnostic: `ANY:{normalized_text}:{doctype}` → 90% confidence
-- Fed by human corrections (the learning mechanism)
+### Strategy 2: Vendor SKU Lookup (Priority 15, ~1ms)
+- Matches vendor-specific item codes from the invoice against **Vendor SKU Mapping**
+- Looks up `(supplier, extracted_item_code)` → mapped ERPNext Item
+- 97% confidence — just below exact match
+- Vendor SKU Mappings are auto-created from corrections when the invoice has an `item_code`
 
-### Stage 3: Fuzzy String Matching (~10-50ms)
+### Strategy 3: Context-Aware Alias Lookup (Priority 20, ~1ms)
+- Supplier-specific: `{supplier}:{normalized_text}:{doctype}` → up to 99% confidence
+- Supplier-agnostic: `ANY:{normalized_text}:{doctype}` → up to 90% confidence
+- Confidence scaled by **decay_weight** (1.0 for fresh aliases, decays to 0.5 over 100+ days)
+- Fed by human corrections on both line items and header fields (supplier, tax template, cost center)
+
+### Strategy 4: Purchase History Match (Priority 25, ~10ms) — Disabled by default
+- Queries **Supplier Item Catalog** for items this supplier has sold before
+- Fuzzy matches against catalog items only (narrowed candidate set)
+- Frequency-boosted: items bought more often score higher
+- 70-85% confidence
+
+### Strategy 5: Fuzzy String Matching (Priority 30, ~10-50ms)
 - Token Sort Ratio + Partial Ratio + Token Set Ratio (best score wins)
 - Score ≥85 → 75-89% confidence
 - Score 60-84 → 60-74% confidence
 - Score <60 → no match
 
-### Stage 4: Embedding-Based Semantic Search (~10-50ms)
+### Strategy 6: HSN-Filtered Matching (Priority 35, ~10ms) — Disabled by default
+- Pre-filters candidate Items by HSN/SAC code before fuzzy matching
+- Falls back to HSN prefix (first 4 digits) if exact HSN has no matches
+- Provides a confidence boost over regular fuzzy matching (+5-10%)
+
+### Strategy 7: Embedding-Based Semantic Search (Priority 40, ~10-50ms)
 - Uses `sentence-transformers/all-MiniLM-L6-v2` (384-dim, L2-normalized)
 - In-memory NumPy index (no external vector DB) backed by `Embedding Index` DocType
 - Cosine similarity via dot product — O(n) scan against all stored vectors
@@ -129,28 +157,42 @@ File Upload → Type Detection → Format Routing → Parsing → LLM Extraction
 - Both agree on same item → +10% confidence boost
 - Cosine similarity > 0.85 → high confidence
 
-### Stage 5: LLM-Assisted Match (~500-2000ms)
-- Only when Stages 1-4 fail
+### Strategy 8: LLM-Assisted Match (Priority 50, ~500-2000ms)
+- Only when all other strategies fail
 - Uses the configured matching LLM provider (Ollama, OpenAI, Anthropic, or Gemini)
 - Sends candidates + past corrections with reviewer reasoning
 - Confidence capped at 88% (always requires review)
+
+### Post-Match: Price Validation
+After any strategy produces a match, the **price validator** adjusts confidence based on historical price data from the Supplier Item Catalog:
+- Rate within 15% of average → +5% confidence boost
+- Rate >50% off average → -10% confidence penalty
+- Requires ≥2 historical occurrences
 
 ## Subsystem 3: Correction Memory (CodeRabbit Pattern)
 
 ```mermaid
 flowchart TD
-    A[Reviewer Corrects Match] --> B[Create/Update Mapping Alias]
+    A[Reviewer Corrects Match] --> B[Create/Update Mapping Alias<br/>with decay_weight = 1.0]
     A --> C[Log to Mapping Correction Log]
     A --> D[Update Historical Embedding Index]
     A --> E[Check for Conflicts]
+    A --> F1[Update Supplier Item Catalog<br/>rate stats + occurrence count]
+    A --> F2[Create Vendor SKU Mapping<br/>if item_code present]
 
-    B --> F[Next Invoice: Stage 2 catches it instantly]
-    D --> G[Next Invoice: Stage 4 finds similar text]
-    C --> H[Next Invoice: Stage 5 uses reviewer reasoning]
+    B --> G[Next Invoice: Alias catches it instantly]
+    D --> H[Next Invoice: Embedding search finds similar text]
+    C --> I[Next Invoice: LLM uses reviewer reasoning]
+    F1 --> J[Next Invoice: Purchase History narrows candidates<br/>+ Price Validator adjusts confidence]
+    F2 --> K[Next Invoice: Vendor SKU exact match at 97%]
 
-    E -->|Conflict found| I{Correction count > 1?}
-    I -->|Yes| J[New correction is authoritative]
-    I -->|No| K[Flag both for senior review]
+    E -->|Conflict found| L{Correction count > 1?}
+    L -->|Yes| M[New correction is authoritative]
+    L -->|No| N[Flag both for senior review]
+
+    A2[Reviewer Overrides Header<br/>Supplier / Tax Template / Cost Center] --> B2[Create Mapping Alias for header field]
+    A2 --> C2[Log to Mapping Correction Log]
+    B2 --> G2[Next Invoice: Alias catches header field instantly]
 ```
 
 ## Confidence-Based Routing
@@ -168,12 +210,16 @@ flowchart LR
 
 | Doctype | Purpose | Fed By | Feeds Into |
 |---------|---------|--------|------------|
-| Invoice Automation Settings | Single source of truth for all configuration (API keys, thresholds, file handling, etc.) | Admin | All modules |
+| Invoice Automation Settings | Configuration + custom extraction fields | Admin | All modules |
 | Invoice Processing Queue | Pipeline tracking per invoice | File upload / API | Purchase Invoice |
 | Invoice Line Item Match | Per-line match results | Matching Pipeline | Review UI, PI creation |
-| Mapping Alias | Learned mappings | Human corrections | Stage 2 lookups |
-| Mapping Correction Log | Institutional knowledge | Human corrections | Stage 5 LLM context |
-| Embedding Index | Vector storage | Index builder / corrections | Stage 4 search |
+| Mapping Alias | Learned mappings with recency decay | Human corrections (line items + headers) | Alias strategy lookup |
+| Mapping Correction Log | Institutional knowledge | Human corrections | LLM strategy context |
+| Embedding Index | Vector storage | Index builder / corrections | Embedding strategy search |
+| Matching Strategy | Strategy registry (enable/disable/reorder) | Admin / seed data | Matching Pipeline |
+| Supplier Item Catalog | Supplier-item affinity + price stats | PI submissions / corrections | Purchase History strategy, Price Validator |
+| Vendor SKU Mapping | Vendor item codes → ERPNext Items | Human corrections | Vendor SKU strategy |
+| Extraction Field | Custom extraction field definitions | Admin (child of Settings) | Dynamic prompt + schema |
 
 ## Queue Record Lifecycle
 
@@ -197,26 +243,30 @@ flowchart LR
 
 When a user clicks **Review & Create Invoice**:
 
-1. `get_review_data` API returns extracted vs matched data side-by-side
-2. A dialog displays:
-   - Validation warnings (amount mismatches, duplicates)
-   - Header comparison table (supplier, dates, amounts) with confidence indicators
-   - Line items table with extracted description, qty, rate and matched item + confidence
-   - Supplier override field
-   - Per-line correction fields (Item link + reasoning text)
+1. `get_review_data` API returns extracted vs matched data side-by-side (including `source_file` for preview and enriched line item fields: item_code, SKU, tax_rate, discount)
+2. A two-panel review dialog opens:
+   - **Left panel**: Invoice preview (PDF iframe or image) with toggle to hide/show
+   - **Right panel** (scrollable):
+     - Color-coded validation warnings (amount mismatches, duplicates, extraction issues)
+     - Compact header grid with confidence badges and pencil-to-edit for Supplier, Tax Template, Cost Center
+     - Line item cards sorted by attention needed (low confidence first, auto-expanded)
+     - Each card expands inline to show full extracted details (qty, rate, amount, UOM, HSN, item code, SKU, tax rate, discount) + correction fields
+   - **Sticky summary bar**: attention count, change count, action buttons — updates in real-time
 3. On confirm, `confirm_mapping` API:
-   - Applies supplier override (if changed)
+   - Applies header overrides (supplier, tax template, cost center) — each creates aliases and correction logs via `process_header_correction()`
    - Processes line item corrections via `process_correction()`:
-     - Creates/updates Mapping Alias (Stage 2 learning)
-     - Logs to Mapping Correction Log (Stage 5 LLM context)
-     - Enqueues embedding index update (Stage 4 learning)
+     - Creates/updates Mapping Alias with recency weight (Alias strategy learning)
+     - Logs to Mapping Correction Log (LLM strategy context)
+     - Enqueues embedding index update (Embedding strategy learning)
+     - Updates Supplier Item Catalog (Purchase History strategy + Price Validator)
+     - Creates Vendor SKU Mapping if vendor item code present (Vendor SKU strategy)
      - Checks for conflicts with prior corrections
    - Runs duplicate detection
-   - Creates Draft Purchase Invoice with matched/extracted data
+   - Creates Draft Purchase Invoice with matched/extracted data + custom field mappings
 
 ## The Learning Curve
 
 - **Week 1**: Most invoices go to Review Queue. System relies on exact lookups and fuzzy matching.
-- **Month 1**: Alias table builds from corrections. Stage 2 catches 40-50% of repeat items.
-- **Month 3**: Historical embedding index grows. Stage 4 handles variations. Review drops significantly.
-- **Month 6+**: 90%+ automatic. Auto-create can be safely enabled.
+- **Month 1**: Alias table builds from corrections. Vendor SKU mappings established. Alias strategy catches 40-50% of repeat items.
+- **Month 3**: Supplier Item Catalog populates from PI submissions. Purchase History strategy narrows candidates. Historical embedding index grows. Embedding strategy handles variations. Review drops significantly.
+- **Month 6+**: 90%+ automatic. Price validation boosts confidence on well-known items. Older aliases with low decay weight get deprioritized in favor of recent corrections. Auto-create can be safely enabled.

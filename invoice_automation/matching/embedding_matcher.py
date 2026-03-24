@@ -139,3 +139,30 @@ class EmbeddingMatcher:
 				matched=False, doctype=source_doctype, stage="Embedding",
 				details={"error": str(e)},
 			)
+
+
+class EmbeddingMatcherStrategy:
+	"""Pluggable strategy wrapper for EmbeddingMatcher."""
+
+	name = "Embedding"
+	applies_to = ["Supplier", "Item"]
+
+	def __init__(self, config=None):
+		self.config = config or {}
+		self._matcher = EmbeddingMatcher()
+
+	def match_supplier(self, extracted_data):
+		supplier_name = (
+			extracted_data.get("supplier_name", "")
+			if isinstance(extracted_data, dict)
+			else getattr(extracted_data, "supplier_name", "")
+		) or ""
+		return self._matcher.match(supplier_name, "Supplier", None)
+
+	def match_item(self, line_item, supplier=None):
+		raw_text = (
+			line_item.get("description", "")
+			if isinstance(line_item, dict)
+			else getattr(line_item, "description", "")
+		) or ""
+		return self._matcher.match(raw_text, "Item", supplier)

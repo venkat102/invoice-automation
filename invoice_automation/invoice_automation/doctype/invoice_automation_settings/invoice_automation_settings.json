@@ -67,6 +67,8 @@
   "embedding_index_status",
   "last_embedding_rebuild",
   "embedding_index_count",
+  "sb_custom_extraction",
+  "custom_extraction_fields",
   "sb_general",
   "log_level",
   "cb_general",
@@ -435,6 +437,18 @@
    "fieldtype": "Int",
    "label": "Embedding Index Entries",
    "read_only": 1
+  },
+  {
+   "fieldname": "sb_custom_extraction",
+   "fieldtype": "Section Break",
+   "label": "Custom Extraction Fields"
+  },
+  {
+   "description": "Define additional fields to extract from invoices. These are injected into the LLM extraction prompt and can be mapped to ERPNext fields.",
+   "fieldname": "custom_extraction_fields",
+   "fieldtype": "Table",
+   "label": "Custom Extraction Fields",
+   "options": "Extraction Field"
   },
   {
    "fieldname": "sb_general",

@@ -232,8 +232,21 @@ def get_review_data(queue_name):
 		except (json.JSONDecodeError, TypeError):
 			pass
 
+	# Enrich line items with additional extracted fields from raw data
+	extracted_lines = extracted_data.get("line_items", [])
+	for i, ml in enumerate(matched_lines):
+		if i < len(extracted_lines):
+			el = extracted_lines[i]
+			ml["extracted_tax_rate"] = el.get("tax_rate", "")
+			ml["extracted_tax_amount"] = el.get("tax_amount", "")
+			ml["extracted_discount"] = el.get("discount_amount", "")
+			ml["extracted_sku"] = el.get("sku", "")
+			ml["extracted_item_code"] = ml.get("extracted_item_code") or el.get("item_code", "")
+
 	return {
 		"name": doc.name,
+		"source_file": doc.source_file or "",
+		"file_type": doc.file_type or "",
 		"workflow_state": doc.workflow_state,
 		"extraction_status": doc.extraction_status,
 		"matching_status": doc.matching_status,
@@ -312,7 +325,7 @@ def apply_corrections(queue_doc, corrections=None, header_overrides=None):
 	Processes correction memory (aliases, logs, embeddings) so the system learns.
 	Returns the number of corrections applied.
 	"""
-	from invoice_automation.memory.correction_handler import process_correction
+	from invoice_automation.memory.correction_handler import process_correction, process_header_correction
 
 	corrections_applied = 0
 
@@ -323,10 +336,55 @@ def apply_corrections(queue_doc, corrections=None, header_overrides=None):
 				header_overrides = json.loads(header_overrides)
 			except (json.JSONDecodeError, TypeError) as e:
 				frappe.throw(_("Invalid header_overrides JSON: {0}").format(str(e)))
+
+		extracted_data = json.loads(queue_doc.extracted_data) if queue_doc.extracted_data else {}
+
 		if header_overrides.get("supplier"):
 			if not frappe.db.exists("Supplier", header_overrides["supplier"]):
 				frappe.throw(_("Supplier '{0}' does not exist").format(header_overrides["supplier"]))
+			# Learn from supplier correction if it differs from current match
+			if header_overrides["supplier"] != queue_doc.matched_supplier:
+				raw_vendor_name = extracted_data.get("vendor_name") or ""
+				if raw_vendor_name:
+					process_header_correction(
+						queue_name=queue_doc.name,
+						source_doctype="Supplier",
+						raw_text=raw_vendor_name,
+						corrected_value=header_overrides["supplier"],
+						reasoning=header_overrides.get("supplier_reasoning"),
+					)
 			queue_doc.matched_supplier = header_overrides["supplier"]
+
+		if header_overrides.get("tax_template"):
+			if not frappe.db.exists("Purchase Taxes and Charges Template", header_overrides["tax_template"]):
+				frappe.throw(_("Tax Template '{0}' does not exist").format(header_overrides["tax_template"]))
+			if header_overrides["tax_template"] != queue_doc.matched_tax_template:
+				# Use supplier name as raw text context for tax template alias
+				raw_text = extracted_data.get("vendor_name") or queue_doc.matched_supplier or ""
+				if raw_text:
+					process_header_correction(
+						queue_name=queue_doc.name,
+						source_doctype="Purchase Taxes and Charges Template",
+						raw_text=raw_text,
+						corrected_value=header_overrides["tax_template"],
+						reasoning=header_overrides.get("tax_template_reasoning"),
+					)
+			queue_doc.matched_tax_template = header_overrides["tax_template"]
+
+		if header_overrides.get("cost_center"):
+			if not frappe.db.exists("Cost Center", header_overrides["cost_center"]):
+				frappe.throw(_("Cost Center '{0}' does not exist").format(header_overrides["cost_center"]))
+			if header_overrides["cost_center"] != queue_doc.matched_cost_center:
+				raw_text = extracted_data.get("vendor_name") or queue_doc.matched_supplier or ""
+				if raw_text:
+					process_header_correction(
+						queue_name=queue_doc.name,
+						source_doctype="Cost Center",
+						raw_text=raw_text,
+						corrected_value=header_overrides["cost_center"],
+						reasoning=header_overrides.get("cost_center_reasoning"),
+					)
+			queue_doc.matched_cost_center = header_overrides["cost_center"]
 
 	if corrections:
 		if isinstance(corrections, str):
@@ -693,7 +751,8 @@ def _run_extraction(doc):
 def _run_matching(queue_name):
 	"""Run the matching pipeline on an extracted invoice."""
 	from invoice_automation.matching.pipeline import MatchingPipeline
-	from invoice_automation.extraction.schema import ExtractedInvoice
+	from invoice_automation.extraction.schema import ExtractedInvoice, build_dynamic_model
+	from invoice_automation.extraction.prompt_templates import get_custom_extraction_fields
 
 	doc = frappe.get_doc("Invoice Processing Queue", queue_name)
 
@@ -704,7 +763,11 @@ def _run_matching(queue_name):
 		frappe.db.commit()
 
 		extracted_data = json.loads(doc.extracted_data)
-		invoice = ExtractedInvoice(**extracted_data)
+
+		# Use dynamic model if custom fields are configured
+		custom_fields = get_custom_extraction_fields()
+		model_class = build_dynamic_model(custom_fields)
+		invoice = model_class(**extracted_data)
 
 		# Build a dict for the pipeline (which accepts both dict and pydantic)
 		pipeline_input = {
@@ -723,6 +786,7 @@ def _run_matching(queue_name):
 					"rate": li.unit_price,
 					"amount": li.line_total,
 					"hsn_code": li.hsn_sac_code,
+					"item_code": li.item_code,
 				}
 				for li in invoice.line_items
 			],
@@ -861,6 +925,30 @@ def _create_purchase_invoice(queue_doc, extracted_data):
 	if queue_doc.matched_tax_template:
 		pi.taxes_and_charges = queue_doc.matched_tax_template
 		pi.set_taxes()
+
+	# Apply custom extraction field mappings to Purchase Invoice
+	from invoice_automation.extraction.prompt_templates import get_custom_extraction_fields
+
+	custom_fields = get_custom_extraction_fields()
+	for cf in custom_fields:
+		if not cf.get("enabled") or not cf.get("target_doctype") or not cf.get("target_field"):
+			continue
+
+		value = extracted_data.get(cf["field_name"])
+		if not value:
+			continue
+
+		if cf["target_doctype"] == "Purchase Invoice":
+			if hasattr(pi, cf["target_field"]):
+				setattr(pi, cf["target_field"], value)
+		elif cf["target_doctype"] == "Purchase Invoice Item" and cf.get("is_line_item_field"):
+			# Apply to all line items
+			line_items_data = extracted_data.get("line_items", [])
+			for idx, item_row in enumerate(pi.items):
+				if idx < len(line_items_data):
+					li_value = line_items_data[idx].get(cf["field_name"])
+					if li_value and hasattr(item_row, cf["target_field"]):
+						setattr(item_row, cf["target_field"], li_value)
 
 	pi.flags.ignore_permissions = True
 	pi.set_missing_values()

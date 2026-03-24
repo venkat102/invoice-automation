@@ -54,7 +54,7 @@ frappe.ui.form.on("Invoice Processing Queue", {
 			}).addClass("btn-primary");
 		}
 
-		// Correct Mappings — available even on rejected/manual entry invoices
+		// Correct Mappings
 		if (
 			frm.doc.matching_status === "Completed" &&
 			!frm.doc.purchase_invoice
@@ -97,6 +97,8 @@ frappe.ui.form.on("Invoice Processing Queue", {
 });
 
 
+// ── Helpers ──
+
 function show_review_dialog(frm, mode) {
 	frappe.call({
 		method: "invoice_automation.api.endpoints.get_review_data",
@@ -113,22 +115,388 @@ function show_review_dialog(frm, mode) {
 	});
 }
 
+function confidence_class(confidence) {
+	if (confidence >= 90) return "high";
+	if (confidence >= 60) return "medium";
+	if (confidence > 0) return "low";
+	return "none";
+}
 
-function confidence_indicator(confidence) {
-	if (confidence >= 90) return '<span style="color: var(--green-500);">' + confidence.toFixed(0) + "%</span>";
-	if (confidence >= 60) return '<span style="color: var(--orange-500);">' + confidence.toFixed(0) + "%</span>";
-	if (confidence > 0) return '<span style="color: var(--red-500);">' + confidence.toFixed(0) + "%</span>";
-	return '<span style="color: var(--text-muted);">-</span>';
+function confidence_badge(confidence) {
+	var cls = confidence_class(confidence);
+	var icon = cls === "high" ? "&#10003;" : cls === "medium" ? "&#9888;" : cls === "low" ? "&#10007;" : "&ndash;";
+	return '<span class="confidence-badge ' + cls + '">' + icon + " " + (confidence > 0 ? confidence.toFixed(0) + "%" : "-") + "</span>";
+}
+
+function esc(val) {
+	return frappe.utils.escape_html(val || "") || "-";
+}
+
+function sort_line_items(items) {
+	// Low confidence first, then by line number
+	return items.slice().sort(function (a, b) {
+		var a_needs = (a.match_confidence || 0) < 90 ? 0 : 1;
+		var b_needs = (b.match_confidence || 0) < 90 ? 0 : 1;
+		if (a_needs !== b_needs) return a_needs - b_needs;
+		return (a.line_number || 0) - (b.line_number || 0);
+	});
 }
 
 
-function collect_corrections(data, values, header) {
+// ── Main Dialog Renderer ──
+
+function render_review_dialog(frm, data, mode) {
+	var h = data.header;
+	var is_create = mode === "create";
+	var sorted_items = sort_line_items(data.line_items || []);
+	var needs_attention_count = sorted_items.filter(function (li) { return (li.match_confidence || 0) < 90; }).length;
+
+	// ── Build PDF panel ──
+	var file_url = data.source_file || "";
+	var file_type = (data.file_type || "").toLowerCase();
+	var is_image = ["image", "png", "jpg", "jpeg", "tiff", "webp"].some(function (t) { return file_type.indexOf(t) >= 0; });
+	var preview_html = "";
+	if (file_url) {
+		if (is_image) {
+			preview_html = '<img src="' + file_url + '" alt="Invoice preview">';
+		} else {
+			preview_html = '<iframe src="' + file_url + '"></iframe>';
+		}
+	} else {
+		preview_html = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);">No preview available</div>';
+	}
+
+	var pdf_panel = `
+		<div class="review-pdf-panel" id="review-pdf-panel">
+			<div class="pdf-header">
+				<span class="pdf-title">${__("Invoice Preview")}</span>
+				<button class="btn-toggle-pdf" id="btn-toggle-pdf">${__("Hide")}</button>
+			</div>
+			${preview_html}
+		</div>`;
+
+	// ── Build warnings ──
+	var warnings_html = "";
+	var warning_items = [];
+	if (data.extraction_warnings && data.extraction_warnings.length) {
+		data.extraction_warnings.forEach(function (w) {
+			warning_items.push('<div class="review-warning-item ' + (w.severity === "error" ? "error" : "info") + '">' + esc(w.message || w) + "</div>");
+		});
+	}
+	if (data.validation.amount_mismatch) {
+		warning_items.push('<div class="review-warning-item warning">' + __("Amount Mismatch") + ": " + esc(data.validation.amount_mismatch_details) + "</div>");
+	}
+	if (data.validation.duplicate_flag) {
+		warning_items.push('<div class="review-warning-item error">' + __("Duplicate Warning") + ": " + esc(data.validation.duplicate_details) + "</div>");
+	}
+	if (warning_items.length) {
+		warnings_html = '<div class="review-warnings">' + warning_items.join("") + "</div>";
+	}
+
+	// ── Build header card ──
+	var header_fields_html = "";
+	var header_rows = [
+		{ label: __("Supplier"), value: h.supplier.matched || h.supplier.extracted, extra: h.supplier.extracted_tax_id, conf: h.supplier.confidence, editable: "supplier" },
+		{ label: __("Invoice #"), value: h.invoice_number.matched || h.invoice_number.extracted },
+		{ label: __("Date"), value: h.invoice_date.matched || h.invoice_date.extracted },
+		{ label: __("Due Date"), value: h.due_date.matched || h.due_date.extracted },
+		{ label: __("Currency"), value: h.currency.matched || h.currency.extracted },
+		{ label: __("Total"), value: h.total_amount.matched || h.total_amount.extracted },
+		{ label: __("Tax Template"), value: h.tax_template.matched, editable: "tax_template" },
+		{ label: __("Cost Center"), value: (h.cost_center && h.cost_center.matched) || "", editable: "cost_center" },
+	];
+
+	header_rows.forEach(function (row) {
+		var conf_html = row.conf ? " " + confidence_badge(row.conf) : "";
+		var edit_btn = row.editable ? ' <span class="edit-btn" data-edit="' + row.editable + '">&#9998;</span>' : "";
+		var extra_html = row.extra ? '<br><span style="font-size:10px;color:var(--text-muted);">' + esc(row.extra) + "</span>" : "";
+		header_fields_html += `
+			<div class="review-header-field" data-header-field="${row.editable || ""}">
+				<span class="field-label">${row.label}</span>
+				<span class="field-value">${esc(row.value)}${extra_html}${conf_html}${edit_btn}</span>
+				<div class="field-edit" data-edit-target="${row.editable || ""}"></div>
+			</div>`;
+	});
+
+	// Header override area (hidden by default, revealed when edit is clicked)
+	var header_override_html = `
+		<div class="header-override-area" id="header-override-area">
+			<div class="header-override-grid">
+				<div data-header-ctrl="supplier"></div>
+				<div data-header-ctrl="supplier_reasoning"></div>
+				<div data-header-ctrl="tax_template"></div>
+				<div data-header-ctrl="tax_template_reasoning"></div>
+				<div data-header-ctrl="cost_center"></div>
+				<div data-header-ctrl="cost_center_reasoning"></div>
+			</div>
+		</div>`;
+
+	var header_html = `
+		<div class="review-header-card">
+			<div class="header-title">
+				<span>${__("Invoice Details")}</span>
+				<span>${confidence_badge(data.overall_confidence)} <span style="font-size:var(--text-xs);color:var(--text-muted);margin-left:4px;">${esc(data.routing_decision)}</span></span>
+			</div>
+			<div class="review-header-grid">${header_fields_html}</div>
+			${header_override_html}
+		</div>`;
+
+	// ── Build line items ──
+	var lines_html = "";
+	sorted_items.forEach(function (li) {
+		var conf = li.match_confidence || 0;
+		var needs = conf < 90;
+		var unmatched = !li.matched_item;
+		var card_cls = unmatched ? "unmatched" : needs ? "needs-attention" : "";
+		var auto_expand = needs || unmatched;
+
+		// Summary row (always visible)
+		var amounts_html = "";
+		if (li.extracted_qty) amounts_html += '<span>Qty: ' + esc(li.extracted_qty) + "</span>";
+		if (li.extracted_rate) amounts_html += '<span>Rate: ' + esc(li.extracted_rate) + "</span>";
+		if (li.extracted_amount) amounts_html += '<span>Amt: ' + esc(li.extracted_amount) + "</span>";
+
+		var match_display = li.matched_item
+			? esc(li.matched_item)
+			: '<span style="color:var(--red-500);">' + __("Unmatched") + "</span>";
+
+		// Detail grid (all extracted fields)
+		var detail_fields = [];
+		if (li.extracted_description) detail_fields.push({ l: __("Description"), v: li.extracted_description });
+		if (li.extracted_qty) detail_fields.push({ l: __("Quantity"), v: li.extracted_qty });
+		if (li.extracted_rate) detail_fields.push({ l: __("Unit Price"), v: li.extracted_rate });
+		if (li.extracted_amount) detail_fields.push({ l: __("Amount"), v: li.extracted_amount });
+		if (li.extracted_unit) detail_fields.push({ l: __("UOM"), v: li.extracted_unit });
+		if (li.extracted_hsn) detail_fields.push({ l: __("HSN/SAC"), v: li.extracted_hsn });
+		if (li.extracted_item_code) detail_fields.push({ l: __("Item Code"), v: li.extracted_item_code });
+		if (li.extracted_sku) detail_fields.push({ l: __("SKU"), v: li.extracted_sku });
+		if (li.extracted_tax_rate) detail_fields.push({ l: __("Tax Rate"), v: li.extracted_tax_rate + "%" });
+		if (li.extracted_tax_amount) detail_fields.push({ l: __("Tax Amount"), v: li.extracted_tax_amount });
+		if (li.extracted_discount) detail_fields.push({ l: __("Discount"), v: li.extracted_discount });
+
+		var detail_grid = detail_fields.map(function (f) {
+			return '<div class="line-detail-field"><span class="detail-label">' + f.l + '</span><span class="detail-value">' + esc(f.v) + "</span></div>";
+		}).join("");
+
+		lines_html += `
+			<div class="review-line-item ${card_cls} ${auto_expand ? "expanded" : ""}" data-line="${li.line_number}">
+				<div class="review-line-summary">
+					<span class="line-num">#${li.line_number}</span>
+					<span class="line-desc" title="${esc(li.extracted_description)}">${esc(li.extracted_description)}</span>
+					<span class="line-amounts">${amounts_html}</span>
+					<span class="line-match">${match_display}</span>
+					${confidence_badge(conf)}
+					<span class="stage-pill">${esc(li.match_stage)}</span>
+					<span class="expand-icon">&#9654;</span>
+				</div>
+				<div class="review-line-detail">
+					<div class="line-detail-grid">${detail_grid}</div>
+					<div class="line-matched-row">
+						<span class="matched-label">${__("Matched")} &rarr;</span>
+						<span class="matched-value">${match_display}</span>
+						${confidence_badge(conf)}
+						<span class="stage-pill">${esc(li.match_stage)}</span>
+					</div>
+					<div class="line-correction-area">
+						<div class="correction-title">${__("Correct this match")}</div>
+						<div class="correction-fields">
+							<div data-line-ctrl="corrected_item_${li.line_number}"></div>
+							<div data-line-ctrl="reasoning_${li.line_number}"></div>
+						</div>
+					</div>
+				</div>
+			</div>`;
+	});
+
+	var attention_badge = needs_attention_count > 0
+		? '<span class="attention-count">' + needs_attention_count + " " + __("need attention") + "</span>"
+		: "";
+
+	var lines_section = `
+		<div class="review-lines-section">
+			<div class="lines-title">${__("Line Items")} ${attention_badge}</div>
+			${lines_html}
+		</div>`;
+
+	// ── Build data panel ──
+	var data_panel = `
+		<div class="review-data-panel">
+			${warnings_html}
+			${header_html}
+			${lines_section}
+		</div>`;
+
+	// ── Build summary bar ──
+	var summary_bar = `
+		<div class="review-summary-bar" id="review-summary-bar">
+			<div class="summary-info">
+				<span class="summary-item ${needs_attention_count > 0 ? "has-attention" : ""}" id="summary-attention">
+					${needs_attention_count > 0 ? "&#9888; " + needs_attention_count + " " + __("need review") : "&#10003; " + __("All items matched")}
+				</span>
+				<span class="summary-item" id="summary-changes">0 ${__("changes")}</span>
+			</div>
+			<div class="summary-actions" id="summary-actions"></div>
+		</div>`;
+
+	// ── Assemble full layout ──
+	var layout_html = `
+		<div class="review-container">${pdf_panel}${data_panel}</div>
+		${summary_bar}`;
+
+	// ── Create dialog ──
+	var d = new frappe.ui.Dialog({
+		title: is_create
+			? __("Review Invoice: {0}", [frm.doc.name])
+			: __("Correct Mappings: {0}", [frm.doc.name]),
+		size: "extra-large",
+		fields: [{ fieldtype: "HTML", fieldname: "review_layout", options: layout_html }],
+		primary_action_label: is_create ? __("Confirm & Create Invoice") : __("Save Corrections"),
+		primary_action: function () {
+			var args = collect_corrections_v2(data, controls, header_controls);
+			d.hide();
+			submit_corrections(frm, args, is_create);
+		},
+		secondary_action_label: __("Cancel"),
+	});
+
+	// Remove default modal body padding for edge-to-edge layout
+	d.$wrapper.find(".modal-body").css({ padding: 0, overflow: "hidden" });
+	d.$wrapper.find(".modal-dialog").css({ "max-width": "95vw", width: "95vw" });
+
+	d.show();
+
+	// ── Attach Frappe controls for line item corrections ──
+	var controls = {};
+	sorted_items.forEach(function (li) {
+		var $item_wrapper = d.$wrapper.find('[data-line-ctrl="corrected_item_' + li.line_number + '"]');
+		if ($item_wrapper.length) {
+			var item_ctrl = frappe.ui.form.make_control({
+				df: {
+					fieldtype: "Link",
+					fieldname: "corrected_item_" + li.line_number,
+					options: "Item",
+					label: __("Correct Item"),
+					placeholder: __("Select correct item..."),
+				},
+				parent: $item_wrapper,
+				render_input: true,
+			});
+			item_ctrl.set_value(li.matched_item || "");
+			controls["corrected_item_" + li.line_number] = item_ctrl;
+
+			item_ctrl.$input && item_ctrl.$input.on("change awesomplete-selectcomplete", function () {
+				update_summary(d, data, controls, header_controls);
+				mark_modified(d, li.line_number, item_ctrl.get_value(), li.matched_item);
+			});
+		}
+
+		var $reason_wrapper = d.$wrapper.find('[data-line-ctrl="reasoning_' + li.line_number + '"]');
+		if ($reason_wrapper.length) {
+			var reason_ctrl = frappe.ui.form.make_control({
+				df: {
+					fieldtype: "Small Text",
+					fieldname: "reasoning_" + li.line_number,
+					label: __("Reasoning"),
+					placeholder: __("Why this correction? Helps the system learn."),
+				},
+				parent: $reason_wrapper,
+				render_input: true,
+			});
+			controls["reasoning_" + li.line_number] = reason_ctrl;
+		}
+	});
+
+	// ── Attach Frappe controls for header overrides ──
+	var header_controls = {};
+	var header_defs = [
+		{ name: "supplier", type: "Link", options: "Supplier", label: __("Supplier"), default_val: h.supplier.matched || "" },
+		{ name: "supplier_reasoning", type: "Small Text", label: __("Supplier Reasoning"), placeholder: __("Why?") },
+		{ name: "tax_template", type: "Link", options: "Purchase Taxes and Charges Template", label: __("Tax Template"), default_val: (h.tax_template && h.tax_template.matched) || "" },
+		{ name: "tax_template_reasoning", type: "Small Text", label: __("Tax Template Reasoning"), placeholder: __("Why?") },
+		{ name: "cost_center", type: "Link", options: "Cost Center", label: __("Cost Center"), default_val: (h.cost_center && h.cost_center.matched) || "" },
+		{ name: "cost_center_reasoning", type: "Small Text", label: __("Cost Center Reasoning"), placeholder: __("Why?") },
+	];
+
+	header_defs.forEach(function (hd) {
+		var $wrapper = d.$wrapper.find('[data-header-ctrl="' + hd.name + '"]');
+		if ($wrapper.length) {
+			var ctrl = frappe.ui.form.make_control({
+				df: {
+					fieldtype: hd.type,
+					fieldname: "override_" + hd.name,
+					options: hd.options || "",
+					label: hd.label,
+					placeholder: hd.placeholder || "",
+				},
+				parent: $wrapper,
+				render_input: true,
+			});
+			if (hd.default_val) ctrl.set_value(hd.default_val);
+			header_controls[hd.name] = ctrl;
+
+			if (hd.type === "Link") {
+				ctrl.$input && ctrl.$input.on("change awesomplete-selectcomplete", function () {
+					update_summary(d, data, controls, header_controls);
+				});
+			}
+		}
+	});
+
+	// ── Event: toggle PDF panel ──
+	d.$wrapper.find("#btn-toggle-pdf").on("click", function () {
+		var $panel = d.$wrapper.find("#review-pdf-panel");
+		$panel.toggleClass("hidden");
+		$(this).text($panel.hasClass("hidden") ? __("Show Preview") : __("Hide"));
+	});
+
+	// ── Event: expand/collapse line items ──
+	d.$wrapper.find(".review-line-summary").on("click", function () {
+		$(this).closest(".review-line-item").toggleClass("expanded");
+	});
+
+	// ── Event: header edit buttons ──
+	d.$wrapper.find(".edit-btn").on("click", function (e) {
+		e.stopPropagation();
+		var $area = d.$wrapper.find("#header-override-area");
+		$area.toggleClass("visible");
+		// Scroll to it
+		if ($area.hasClass("visible")) {
+			$area[0].scrollIntoView({ behavior: "smooth", block: "nearest" });
+		}
+	});
+
+	// ── Save Corrections Only button (in create mode) ──
+	if (is_create) {
+		d.add_custom_action(
+			__("Save Corrections Only"),
+			function () {
+				var args = collect_corrections_v2(data, controls, header_controls);
+				if (!args.corrections && !args.header_overrides) {
+					frappe.msgprint(__("No corrections to save."));
+					return;
+				}
+				d.hide();
+				submit_save_only(frm, args);
+			},
+			"btn-default"
+		);
+	}
+
+	// Initial summary update
+	update_summary(d, data, controls, header_controls);
+}
+
+
+// ── Collect corrections from controls ──
+
+function collect_corrections_v2(data, controls, header_controls) {
 	var corrections = [];
 	if (data.line_items) {
 		data.line_items.forEach(function (li) {
-			var corrected = values["corrected_item_" + li.line_number];
-			var reasoning = values["reasoning_" + li.line_number];
-
+			var item_ctrl = controls["corrected_item_" + li.line_number];
+			var reason_ctrl = controls["reasoning_" + li.line_number];
+			var corrected = item_ctrl ? item_ctrl.get_value() : "";
+			var reasoning = reason_ctrl ? reason_ctrl.get_value() : "";
 			if (corrected && corrected !== li.matched_item) {
 				corrections.push({
 					line_number: li.line_number,
@@ -139,315 +507,140 @@ function collect_corrections(data, values, header) {
 		});
 	}
 
+	var h = data.header;
 	var header_overrides = {};
-	if (values.override_supplier && values.override_supplier !== header.supplier.matched) {
-		header_overrides.supplier = values.override_supplier;
+	var supplier_ctrl = header_controls.supplier;
+	if (supplier_ctrl) {
+		var supplier_val = supplier_ctrl.get_value();
+		if (supplier_val && supplier_val !== h.supplier.matched) {
+			header_overrides.supplier = supplier_val;
+			var sr = header_controls.supplier_reasoning;
+			if (sr && sr.get_value()) header_overrides.supplier_reasoning = sr.get_value();
+		}
+	}
+	var tax_ctrl = header_controls.tax_template;
+	if (tax_ctrl) {
+		var tax_val = tax_ctrl.get_value();
+		if (tax_val && tax_val !== (h.tax_template && h.tax_template.matched)) {
+			header_overrides.tax_template = tax_val;
+			var tr = header_controls.tax_template_reasoning;
+			if (tr && tr.get_value()) header_overrides.tax_template_reasoning = tr.get_value();
+		}
+	}
+	var cc_ctrl = header_controls.cost_center;
+	if (cc_ctrl) {
+		var cc_val = cc_ctrl.get_value();
+		if (cc_val && cc_val !== (h.cost_center && h.cost_center.matched)) {
+			header_overrides.cost_center = cc_val;
+			var cr = header_controls.cost_center_reasoning;
+			if (cr && cr.get_value()) header_overrides.cost_center_reasoning = cr.get_value();
+		}
 	}
 
 	return {
 		corrections: corrections.length ? JSON.stringify(corrections) : null,
-		header_overrides: Object.keys(header_overrides).length
-			? JSON.stringify(header_overrides)
-			: null,
+		header_overrides: Object.keys(header_overrides).length ? JSON.stringify(header_overrides) : null,
 	};
 }
 
 
-function render_review_dialog(frm, data, mode) {
+// ── Update summary bar ──
+
+function update_summary(d, data, controls, header_controls) {
+	var change_count = 0;
+
+	// Count line item changes
+	if (data.line_items) {
+		data.line_items.forEach(function (li) {
+			var ctrl = controls["corrected_item_" + li.line_number];
+			if (ctrl) {
+				var val = ctrl.get_value();
+				if (val && val !== li.matched_item) change_count++;
+			}
+		});
+	}
+
+	// Count header changes
 	var h = data.header;
+	var sc = header_controls.supplier;
+	if (sc && sc.get_value() && sc.get_value() !== h.supplier.matched) change_count++;
+	var tc = header_controls.tax_template;
+	if (tc && tc.get_value() && tc.get_value() !== (h.tax_template && h.tax_template.matched)) change_count++;
+	var cc = header_controls.cost_center;
+	if (cc && cc.get_value() && cc.get_value() !== (h.cost_center && h.cost_center.matched)) change_count++;
 
-	// Build header review HTML
-	var header_html = `
-		<div style="margin-bottom: 16px;">
-			<h5 style="margin-bottom: 8px;">Overall Confidence: ${confidence_indicator(data.overall_confidence)}
-			${data.routing_decision ? ' &mdash; <span class="text-muted">' + data.routing_decision + '</span>' : ''}
-			</h5>
-		</div>
-		<table class="table table-bordered" style="font-size: 13px;">
-			<thead><tr>
-				<th style="width:25%;">Field</th>
-				<th style="width:35%;">Extracted</th>
-				<th style="width:30%;">Matched</th>
-				<th style="width:10%;">Confidence</th>
-			</tr></thead>
-			<tbody>
-				<tr>
-					<td><strong>Supplier</strong></td>
-					<td>${frappe.utils.escape_html(h.supplier.extracted || "-")}
-						${h.supplier.extracted_tax_id ? '<br><small class="text-muted">' + frappe.utils.escape_html(h.supplier.extracted_tax_id) + '</small>' : ''}
-					</td>
-					<td>${h.supplier.matched ? frappe.utils.escape_html(h.supplier.matched) : '<span class="text-muted">Not matched</span>'}
-						${h.supplier.stage ? '<br><small class="text-muted">Stage: ' + h.supplier.stage + '</small>' : ''}
-					</td>
-					<td>${confidence_indicator(h.supplier.confidence)}</td>
-				</tr>
-				<tr>
-					<td><strong>Invoice No.</strong></td>
-					<td>${frappe.utils.escape_html(h.invoice_number.extracted || "-")}</td>
-					<td>${frappe.utils.escape_html(h.invoice_number.matched || h.invoice_number.extracted || "-")}</td>
-					<td>-</td>
-				</tr>
-				<tr>
-					<td><strong>Invoice Date</strong></td>
-					<td>${frappe.utils.escape_html(h.invoice_date.extracted || "-")}</td>
-					<td>${frappe.utils.escape_html(h.invoice_date.matched || h.invoice_date.extracted || "-")}</td>
-					<td>-</td>
-				</tr>
-				<tr>
-					<td><strong>Due Date</strong></td>
-					<td>${frappe.utils.escape_html(h.due_date.extracted || "-")}</td>
-					<td>${frappe.utils.escape_html(h.due_date.matched || h.due_date.extracted || "-")}</td>
-					<td>-</td>
-				</tr>
-				<tr>
-					<td><strong>Currency</strong></td>
-					<td>${frappe.utils.escape_html(h.currency.extracted || "-")}</td>
-					<td>${frappe.utils.escape_html(h.currency.matched || h.currency.extracted || "-")}</td>
-					<td>-</td>
-				</tr>
-				<tr>
-					<td><strong>Total Amount</strong></td>
-					<td>${frappe.utils.escape_html(String(h.total_amount.extracted || "-"))}</td>
-					<td>${h.total_amount.matched || h.total_amount.extracted || "-"}</td>
-					<td>-</td>
-				</tr>
-				${h.tax_template.matched ? '<tr><td><strong>Tax Template</strong></td><td>-</td><td>' + frappe.utils.escape_html(h.tax_template.matched) + '</td><td>-</td></tr>' : ''}
-			${h.cost_center && h.cost_center.matched ? '<tr><td><strong>Cost Center</strong></td><td>-</td><td>' + frappe.utils.escape_html(h.cost_center.matched) + '</td><td>-</td></tr>' : ''}
-			</tbody>
-		</table>
-	`;
+	var $changes = d.$wrapper.find("#summary-changes");
+	$changes.text(change_count + " " + __("changes"));
+	$changes.toggleClass("has-changes", change_count > 0);
+}
 
-	// Extraction warnings
-	var warnings_html = "";
-	if (data.extraction_warnings && data.extraction_warnings.length) {
-		warnings_html += '<div class="alert alert-info" style="font-size: 13px;"><strong>Extraction Warnings:</strong><ul style="margin-bottom: 0;">';
-		data.extraction_warnings.forEach(function (w) {
-			var severity_class = w.severity === "error" ? "text-danger" : "";
-			warnings_html += '<li class="' + severity_class + '">' + frappe.utils.escape_html(w.message || w) + "</li>";
+
+// ── Mark line item as modified ──
+
+function mark_modified(d, line_number, new_val, original_val) {
+	var $card = d.$wrapper.find('.review-line-item[data-line="' + line_number + '"]');
+	if (new_val && new_val !== original_val) {
+		$card.addClass("modified");
+	} else {
+		$card.removeClass("modified");
+	}
+}
+
+
+// ── Submit helpers ──
+
+function submit_corrections(frm, args, is_create) {
+	if (is_create) {
+		frappe.call({
+			method: "invoice_automation.api.endpoints.confirm_mapping",
+			args: {
+				queue_name: frm.doc.name,
+				corrections: args.corrections,
+				header_overrides: args.header_overrides,
+			},
+			freeze: true,
+			freeze_message: __("Creating Purchase Invoice..."),
+			callback: function (r) {
+				frm.reload_doc();
+				if (r.message && r.message.purchase_invoice) {
+					frappe.show_alert({
+						message: __("Purchase Invoice {0} created", [r.message.purchase_invoice]),
+						indicator: "green",
+					});
+				} else if (r.message && r.message.status === "blocked") {
+					frappe.msgprint({
+						title: __("Blocked"),
+						message: r.message.details
+							? r.message.details.details || r.message.reason
+							: r.message.reason,
+						indicator: "orange",
+					});
+				}
+			},
 		});
-		warnings_html += "</ul></div>";
+	} else {
+		submit_save_only(frm, args);
 	}
+}
 
-	// Validation warnings
-	if (data.validation.amount_mismatch) {
-		warnings_html += `<div class="alert alert-warning" style="font-size: 13px;">
-			<strong>Amount Mismatch:</strong> ${frappe.utils.escape_html(data.validation.amount_mismatch_details || "")}
-		</div>`;
-	}
-	if (data.validation.duplicate_flag) {
-		warnings_html += `<div class="alert alert-danger" style="font-size: 13px;">
-			<strong>Duplicate Warning:</strong> ${frappe.utils.escape_html(data.validation.duplicate_details || "")}
-		</div>`;
-	}
-
-	// Line items table
-	var lines_html = "";
-	if (data.line_items && data.line_items.length) {
-		lines_html = `
-			<h6 style="margin-top: 16px;">Line Items</h6>
-			<table class="table table-bordered" style="font-size: 12px;">
-				<thead><tr>
-					<th style="width:5%;">#</th>
-					<th style="width:30%;">Extracted Description</th>
-					<th style="width:8%;">Qty</th>
-					<th style="width:10%;">Rate</th>
-					<th style="width:10%;">Amount</th>
-					<th style="width:22%;">Matched Item</th>
-					<th style="width:8%;">Conf.</th>
-					<th style="width:7%;">Stage</th>
-				</tr></thead>
-				<tbody>`;
-
-		data.line_items.forEach(function (li) {
-			var conf = confidence_indicator(li.match_confidence);
-			var item_display = li.matched_item
-				? frappe.utils.escape_html(li.matched_item)
-				: '<span class="text-muted">Not matched</span>';
-
-			lines_html += `<tr data-line="${li.line_number}">
-				<td>${li.line_number}</td>
-				<td>${frappe.utils.escape_html(li.extracted_description || "-")}</td>
-				<td>${frappe.utils.escape_html(li.extracted_qty || "-")}</td>
-				<td>${frappe.utils.escape_html(li.extracted_rate || "-")}</td>
-				<td>${frappe.utils.escape_html(li.extracted_amount || "-")}</td>
-				<td>${item_display}</td>
-				<td>${conf}</td>
-				<td>${frappe.utils.escape_html(li.match_stage || "-")}</td>
-			</tr>`;
-		});
-		lines_html += "</tbody></table>";
-	}
-
-	// Build dialog fields
-	var fields = [
-		{
-			fieldtype: "HTML",
-			fieldname: "review_html",
-			options: warnings_html + header_html + lines_html,
+function submit_save_only(frm, args) {
+	frappe.call({
+		method: "invoice_automation.api.endpoints.save_corrections",
+		args: {
+			queue_name: frm.doc.name,
+			corrections: args.corrections,
+			header_overrides: args.header_overrides,
 		},
-		{ fieldtype: "Section Break", label: __("Supplier Override") },
-		{
-			fieldtype: "Link",
-			fieldname: "override_supplier",
-			label: __("Supplier"),
-			options: "Supplier",
-			default: h.supplier.matched || "",
-			description: __("Change if the matched supplier is wrong"),
-		},
-		{ fieldtype: "Section Break", label: __("Line Item Corrections") },
-		{
-			fieldtype: "HTML",
-			fieldname: "corrections_help",
-			options: '<p class="text-muted" style="font-size: 12px;">' +
-				__("Correct items that were matched incorrectly. Your corrections teach the system for future invoices.") +
-				"</p>",
-		},
-	];
-
-	// Add correction fields for each line item
-	if (data.line_items && data.line_items.length) {
-		data.line_items.forEach(function (li) {
-			fields.push({
-				fieldtype: "Column Break",
-			});
-			fields.push({
-				fieldtype: "HTML",
-				fieldname: "line_label_" + li.line_number,
-				options:
-					'<div style="font-size: 12px; margin-bottom: 4px;"><strong>Line ' +
-					li.line_number + ':</strong> ' +
-					frappe.utils.escape_html(li.extracted_description || "") +
-					" " + confidence_indicator(li.match_confidence) +
-					"</div>",
-			});
-			fields.push({
-				fieldtype: "Link",
-				fieldname: "corrected_item_" + li.line_number,
-				label: __("Item for Line {0}", [li.line_number]),
-				options: "Item",
-				default: li.matched_item || "",
-			});
-			fields.push({
-				fieldtype: "Small Text",
-				fieldname: "reasoning_" + li.line_number,
-				label: __("Reasoning (Line {0})", [li.line_number]),
-				description: __("Why this correction? Helps the system learn."),
-			});
-			fields.push({
-				fieldtype: "Section Break",
-			});
-		});
-	}
-
-	// Dialog title and actions depend on mode
-	var is_create_mode = (mode === "create");
-	var dialog_title = is_create_mode
-		? __("Review Invoice: {0}", [frm.doc.name])
-		: __("Correct Mappings: {0}", [frm.doc.name]);
-
-	var d = new frappe.ui.Dialog({
-		title: dialog_title,
-		size: "extra-large",
-		fields: fields,
-		primary_action_label: is_create_mode
-			? __("Confirm & Create Invoice")
-			: __("Save Corrections"),
-		primary_action: function (values) {
-			var args = collect_corrections(data, values, h);
-			d.hide();
-
-			if (is_create_mode) {
-				frappe.call({
-					method: "invoice_automation.api.endpoints.confirm_mapping",
-					args: {
-						queue_name: frm.doc.name,
-						corrections: args.corrections,
-						header_overrides: args.header_overrides,
-					},
-					freeze: true,
-					freeze_message: __("Creating Purchase Invoice..."),
-					callback: function (r) {
-						frm.reload_doc();
-						if (r.message && r.message.purchase_invoice) {
-							frappe.show_alert({
-								message: __("Purchase Invoice {0} created", [r.message.purchase_invoice]),
-								indicator: "green",
-							});
-						} else if (r.message && r.message.status === "blocked") {
-							frappe.msgprint({
-								title: __("Blocked"),
-								message: r.message.details
-									? r.message.details.details || r.message.reason
-									: r.message.reason,
-								indicator: "orange",
-							});
-						}
-					},
-				});
-			} else {
-				frappe.call({
-					method: "invoice_automation.api.endpoints.save_corrections",
-					args: {
-						queue_name: frm.doc.name,
-						corrections: args.corrections,
-						header_overrides: args.header_overrides,
-					},
-					freeze: true,
-					freeze_message: __("Saving corrections..."),
-					callback: function (r) {
-						frm.reload_doc();
-						if (r.message) {
-							frappe.show_alert({
-								message: __("{0} corrections saved. The system will use these for future invoices.", [r.message.corrections_applied]),
-								indicator: "green",
-							});
-						}
-					},
+		freeze: true,
+		freeze_message: __("Saving corrections..."),
+		callback: function (r) {
+			frm.reload_doc();
+			if (r.message) {
+				frappe.show_alert({
+					message: __("{0} corrections saved. The system will use these for future invoices.", [r.message.corrections_applied]),
+					indicator: "green",
 				});
 			}
 		},
-		secondary_action_label: __("Cancel"),
 	});
-
-	// In create mode, add a third button to save corrections without creating PI
-	if (is_create_mode) {
-		d.add_custom_action(
-			__("Save Corrections Only"),
-			function () {
-				var values = d.get_values();
-				var args = collect_corrections(data, values, h);
-
-				if (!args.corrections && !args.header_overrides) {
-					frappe.msgprint(__("No corrections to save."));
-					return;
-				}
-
-				d.hide();
-
-				frappe.call({
-					method: "invoice_automation.api.endpoints.save_corrections",
-					args: {
-						queue_name: frm.doc.name,
-						corrections: args.corrections,
-						header_overrides: args.header_overrides,
-					},
-					freeze: true,
-					freeze_message: __("Saving corrections..."),
-					callback: function (r) {
-						frm.reload_doc();
-						if (r.message) {
-							frappe.show_alert({
-								message: __("{0} corrections saved without creating invoice.", [r.message.corrections_applied]),
-								indicator: "blue",
-							});
-						}
-					},
-				});
-			},
-			"btn-default"
-		);
-	}
-
-	d.show();
-	d.$wrapper.find(".modal-dialog").css("max-width", "960px");
 }

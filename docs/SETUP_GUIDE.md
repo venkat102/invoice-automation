@@ -1,23 +1,40 @@
 # Setup Guide
 
+New to Frappe/ERPNext? Read the **[Glossary](GLOSSARY.md)** first to understand the terminology.
+
 ## Prerequisites
 
-| Dependency | Required? |
-|---|---|
-| **Frappe** | Yes |
-| **ERPNext** | Yes |
-| **Redis** | Yes (for indexes & caching) |
-| **RQ Scheduler** | Yes (for background jobs) |
-| **Ollama** | Only if using Ollama as LLM provider |
+| Dependency | Version | Required? | Notes |
+|---|---|---|---|
+| **Python** | 3.11+ | Yes | 3.12 recommended |
+| **Node.js** | 18+ | Yes | 20 LTS recommended (for bench asset builds) |
+| **Frappe** | v15+ | Yes | The web framework ERPNext runs on |
+| **ERPNext** | v15+ | Yes | The ERP system this app extends |
+| **Redis** | 6+ | Yes | Used for fast index lookups and caching |
+| **RQ Scheduler** | (bundled with Frappe) | Yes | Enable with `bench enable-scheduler` for background jobs |
+| **LibreOffice** | Any | Only for .doc files | `apt install libreoffice` or `brew install libreoffice` |
+| **Ollama** | Latest | Only if using Ollama as LLM provider | `ollama serve` must be running, model must be pulled |
+
+### What is each prerequisite for?
+
+- **Frappe/ERPNext**: The platform this app runs on. Provides Suppliers, Items, Purchase Invoices, and the desk UI.
+- **Redis**: Stores fast-lookup indexes for supplier names, tax IDs, and aliases. Also used by Frappe for caching and real-time updates.
+- **RQ Scheduler**: Runs background jobs like extraction, embedding generation, and daily index rebuilds. Without it, invoices won't process automatically.
+- **LibreOffice**: Only needed if you upload `.doc` files (not `.docx`). Converts DOC to DOCX for text extraction.
+- **Ollama**: A free, local AI model runner. Default for extraction. Alternative paid providers (OpenAI, Anthropic, Gemini) don't need Ollama.
 
 ## Installation
 
 ```bash
 bench get-app invoice_automation <repo-url>
 bench --site <site-name> install-app invoice_automation
+bench enable-scheduler
 ```
 
-This automatically rebuilds Redis indexes and builds the embedding index in the background.
+This automatically:
+- Rebuilds Redis indexes (Suppliers, Items, Aliases)
+- Seeds default Matching Strategy records
+- Enqueues embedding index build in the background (may take several minutes)
 
 ---
 
@@ -88,7 +105,41 @@ You need to configure **two** LLM providers — one for extraction (parsing invo
 | `Allowed Extensions` | `pdf,png,jpg,jpeg,tiff,webp,docx,doc` | Accepted file types |
 | `Enable Batch Parse` | Yes | Allow batch file processing |
 
-### 6. General
+### 6. Matching Strategies
+
+The matching pipeline is pluggable. Navigate to **Matching Strategy** list to manage strategies:
+
+| Strategy | Priority | Default | What It Does |
+|---|---|---|---|
+| Exact | 10 | Enabled | Redis lookups by tax ID, PAN, normalized name |
+| Vendor SKU | 15 | Enabled | Looks up vendor-specific item codes |
+| Alias | 20 | Enabled | Human-corrected mapping aliases with recency weighting |
+| Purchase History | 25 | **Disabled** | Matches against items from Supplier Item Catalog |
+| Fuzzy | 30 | Enabled | Token-based string similarity |
+| HSN Filter | 35 | **Disabled** | HSN code-filtered fuzzy matching |
+| Embedding | 40 | Enabled | Semantic vector similarity search |
+| LLM | 50 | Enabled | AI-based fallback with correction context |
+
+Enable/disable strategies and change priority order without code changes. Lower priority number = executed first.
+
+### 7. Custom Extraction Fields
+
+Define additional fields to extract from invoices in **Invoice Automation Settings** → **Custom Extraction Fields** section:
+
+| Column | Purpose |
+|---|---|
+| Field Name | Machine key (e.g., `project_code`) |
+| Field Label | Human label (e.g., "Project Code") |
+| Field Type | String / Decimal / Date / Boolean |
+| Is Line Item Field | Header vs per-line-item field |
+| Target Doctype | Purchase Invoice or Purchase Invoice Item |
+| Target Field | ERPNext field to map to |
+| Normalizer | None / Text / Date / Currency / Decimal |
+| Description for LLM | Instructions for the AI on how to extract this field |
+
+Custom fields are injected into the LLM extraction prompt and automatically mapped to the target ERPNext field when creating Purchase Invoices.
+
+### 8. General
 
 | Setting | Default | Options |
 |---|---|---|
@@ -104,8 +155,13 @@ You need to configure **two** LLM providers — one for extraction (parsing invo
 2. **Rebuild indexes** — use the buttons in Invoice Automation Settings or call the `rebuild_index` API if needed.
 
 3. **Scheduled tasks** (configured automatically via hooks):
-   - **Daily**: Redis index rebuild + sync missing embeddings
+   - **Daily**: Redis index rebuild + sync missing embeddings + alias decay weight recalculation
    - **Weekly**: Resolve stale correction conflicts
+
+4. **Backfill Supplier Item Catalog** (optional) — if you have existing Purchase Invoices, run this once to populate the supplier-item catalog:
+   ```bash
+   bench --site <site-name> execute invoice_automation.invoice_automation.doctype.supplier_item_catalog.supplier_item_catalog.backfill_catalog
+   ```
 
 ---
 

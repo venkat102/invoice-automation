@@ -116,3 +116,27 @@ Respond with ONLY a JSON object (no markdown, no code blocks):
 				matched=False, doctype=source_doctype, stage="LLM",
 				details={"error": f"Failed to parse LLM response: {e}"},
 			)
+
+
+class LLMMatcherStrategy:
+	"""Pluggable strategy wrapper for LLMMatcher.
+
+	Requires special handling: needs candidates list and correction context
+	from the pipeline, so it delegates to the pipeline's _try_llm method.
+	"""
+
+	name = "LLM"
+	applies_to = ["Supplier", "Item"]
+	is_llm = True  # Flag for pipeline to handle specially
+
+	def __init__(self, config=None):
+		self.config = config or {}
+		self._matcher = LLMMatcher()
+
+	def match_supplier(self, extracted_data):
+		# LLM matching is handled specially by the pipeline (needs candidates + context)
+		return MatchResult(matched=False, doctype="Supplier", stage="LLM")
+
+	def match_item(self, line_item, supplier=None):
+		# LLM matching is handled specially by the pipeline (needs candidates + context)
+		return MatchResult(matched=False, doctype="Item", stage="LLM")

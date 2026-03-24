@@ -1,5 +1,9 @@
 # Invoice Automation - Technical Documentation
 
+> **New here?** Start with the [Glossary](GLOSSARY.md) for terminology, then the [Example Walkthrough](EXAMPLE_WALKTHROUGH.md) for a concrete end-to-end example. This document is for developers and system administrators.
+
+**Related docs:** [Glossary](GLOSSARY.md) | [AI Concepts](AI_CONCEPTS.md) | [Frappe Basics](FRAPPE_BASICS.md) | [Permissions](PERMISSIONS.md) | [Deployment](DEPLOYMENT.md) | [Development](DEVELOPMENT.md)
+
 ## Table of Contents
 
 1. [Architecture Overview](#architecture-overview)
@@ -52,19 +56,24 @@ invoice_automation/
 │   └── validators/
 │       └── validation_service.py  # 8 consistency checks
 │
-├── matching/                      # ── SUBSYSTEM 2: Matching Pipeline ──
-│   ├── pipeline.py                # MatchingPipeline: 5-stage orchestrator
+├── matching/                      # ── SUBSYSTEM 2: Pluggable Matching Pipeline ──
+│   ├── pipeline.py                # MatchingPipeline: dynamic strategy orchestrator
+│   ├── base_strategy.py           # BaseMatchingStrategy ABC for pluggable strategies
 │   ├── normalizer.py              # Text normalization for matching (company suffixes, units)
-│   ├── exact_matcher.py           # Stage 1: Redis exact lookups + MatchResult dataclass
-│   ├── alias_matcher.py           # Stage 2: Mapping Alias composite key lookups
-│   ├── fuzzy_matcher.py           # Stage 3: thefuzz token_sort/partial/token_set
-│   ├── embedding_matcher.py       # Stage 4: Dual-index semantic vector search
-│   ├── llm_matcher.py             # Stage 5: LLM matching (provider-agnostic)
+│   ├── exact_matcher.py           # Strategy: Redis exact lookups + MatchResult dataclass
+│   ├── vendor_sku_matcher.py      # Strategy: Vendor SKU Mapping lookups (97% confidence)
+│   ├── alias_matcher.py           # Strategy: Mapping Alias composite key lookups with decay
+│   ├── purchase_history_matcher.py # Strategy: Supplier Item Catalog fuzzy matching
+│   ├── fuzzy_matcher.py           # Strategy: thefuzz token_sort/partial/token_set
+│   ├── hsn_filter.py              # Strategy: HSN code-filtered fuzzy matching
+│   ├── embedding_matcher.py       # Strategy: Dual-index semantic vector search
+│   ├── llm_matcher.py             # Strategy: LLM matching (provider-agnostic)
+│   ├── price_validator.py         # Post-match: confidence adjustment from price history
 │   └── confidence.py              # get_config(), determine_routing(), ConfidenceScorer
 │
 ├── memory/                        # ── SUBSYSTEM 3: Correction Memory ──
-│   ├── correction_handler.py      # process_correction(): alias + log + embedding + conflict
-│   ├── alias_manager.py           # AliasManager: upsert/lookup/deactivate + Redis sync
+│   ├── correction_handler.py      # process_correction() + process_header_correction()
+│   ├── alias_manager.py           # AliasManager + apply_decay_weights() daily job
 │   ├── conflict_resolver.py       # check_for_conflicts(), resolve_stale_conflicts()
 │   └── reasoning_retriever.py     # ReasoningRetriever: embedding-based correction lookup
 │
@@ -86,6 +95,10 @@ invoice_automation/
 │   ├── anthropic_provider.py     # Anthropic / Claude (Sonnet, Opus, Haiku)
 │   └── gemini_provider.py        # Google Gemini (Flash, Pro)
 │
+├── public/
+│   └── css/
+│       └── invoice_review.css     # Review dialog styles (two-panel layout, cards, badges)
+│
 ├── api/endpoints.py               # All whitelisted API endpoints (14 endpoints)
 ├── utils/
 │   ├── redis_index.py             # rebuild_all, _build_supplier_index, _build_item_index, doc events
@@ -93,7 +106,7 @@ invoice_automation/
 │   ├── file_utils.py              # compute_sha256, detect_mime_type, validate_file
 │   ├── decimal_utils.py           # to_decimal, safe_multiply, round_decimal (never float)
 │   └── helpers.py                 # get_config_value (reads from Invoice Automation Settings)
-└── hooks.py                       # doc_events, scheduler_events, after_install/migrate
+└── hooks.py                       # doc_events, scheduler_events, after_install/migrate, app_include_css
 ```
 
 ---
@@ -295,6 +308,8 @@ Returns `None` if unrecoverable.
 
 ### Extraction Prompt (`prompt_templates.py`)
 
+The extraction prompt supports **custom fields** configured in Invoice Automation Settings. `build_dynamic_prompt(custom_fields)` injects user-defined fields into the JSON template. `build_dynamic_model(custom_fields)` creates a dynamic Pydantic model extending `ExtractedInvoice`. When no custom fields are configured, the original static prompt and schema are used unchanged.
+
 The system prompt instructs the model to:
 - Extract ONLY what is explicitly present — never hallucinate
 - Return `null` for missing fields
@@ -353,21 +368,28 @@ All monetary fields are `str | None` — string representation of Decimal, never
 
 ---
 
-## Subsystem 2: Matching Pipeline
+## Subsystem 2: Pluggable Matching Pipeline
 
 ### Pipeline Orchestration (`pipeline.py`)
 
 `MatchingPipeline.process(extracted_data)` runs sequentially:
 
-1. **Match Supplier** through Stages 1→5
-2. **Match each Line Item** through Stages 1→5
-3. **Match Tax Templates** (rule-based only, via Stage 1)
-4. **Compute routing** from minimum confidence across all fields
-5. Return `PipelineResult` with all matches, routing decision, processing time
+1. **Load strategies** from `Matching Strategy` doctype (sorted by priority). Falls back to hardcoded defaults if no records exist.
+2. **Match Supplier** through enabled strategies that apply to "Supplier"
+3. **Match each Line Item** through enabled strategies that apply to "Item", with **price validation** applied after each successful match
+4. **Match Tax Templates** (rule-based only, via ExactMatcher — not pluggable)
+5. **Compute routing** from minimum confidence across all fields
+6. Return `PipelineResult` with all matches, routing decision, processing time
 
 The pipeline accepts both `dict` and Pydantic `ExtractedInvoice` objects via duck typing.
 
-### Stage 1: Exact Lookup (`exact_matcher.py`)
+### Matching Strategy Doctype
+
+Each strategy record has: `strategy_name`, `strategy_class` (dotted Python path), `enabled`, `priority` (lower = earlier), `applies_to` (Supplier/Item/Both), `max_confidence`, `settings_json`.
+
+Strategies are instantiated via `importlib.import_module()` at pipeline init. Each strategy class must implement `match_supplier(extracted_data)` and `match_item(line_item, supplier)` returning `MatchResult`.
+
+### Strategy: Exact Lookup (`exact_matcher.py`)
 
 **Supplier matching order:**
 | Lookup | Confidence | Redis Key Pattern |
@@ -383,16 +405,38 @@ The pipeline accepts both `dict` and Pydantic `ExtractedInvoice` objects via duc
 
 Normalization: uppercase, strip punctuation, remove company suffixes (PVT, LTD, LLC, etc.), collapse whitespace.
 
-### Stage 2: Alias Lookup (`alias_matcher.py`)
+### Strategy: Vendor SKU Lookup (`vendor_sku_matcher.py`)
 
-| Lookup | Confidence | Composite Key |
+Matches extracted vendor item codes against `Vendor SKU Mapping` records:
+
+| Lookup | Confidence |
+|--------|-----------|
+| `(supplier, vendor_item_code)` → Item | 97% |
+
+Only applies to Items (not Suppliers). Requires supplier to be already matched.
+
+### Strategy: Alias Lookup (`alias_matcher.py`)
+
+| Lookup | Base Confidence | Composite Key |
 |--------|-----------|---------------|
-| Supplier-specific alias | 99% | `{supplier}:{normalized_text}:{doctype}` |
-| Supplier-agnostic alias | 90% | `ANY:{normalized_text}:{doctype}` |
+| Supplier-specific alias | 99% × decay_weight | `{supplier}:{normalized_text}:{doctype}` |
+| Supplier-agnostic alias | 90% × decay_weight | `ANY:{normalized_text}:{doctype}` |
 
-Aliases are stored in the `Mapping Alias` doctype. Lookup tries Redis cache first (`invoice_automation:alias:{composite_key}`), falls back to DB query. Updates `last_used` on hit.
+Aliases are stored in the `Mapping Alias` doctype. Lookup tries Redis cache first, then DB query for `canonical_name` and `decay_weight`. Updates `last_used` on hit.
 
-### Stage 3: Fuzzy Match (`fuzzy_matcher.py`)
+**Recency decay**: `decay_weight = max(0.5, 1.0 - 0.005 × days_since_last_correction)`. Fresh corrections get full confidence; aliases unused for 100+ days decay to 50%. Recalculated daily by `apply_decay_weights()` scheduled job.
+
+Now also fed by **header corrections** (supplier, tax template, cost center overrides) in addition to line item corrections.
+
+### Strategy: Purchase History Match (`purchase_history_matcher.py`) — Disabled by default
+
+Queries `Supplier Item Catalog` for items this supplier has sold before, then fuzzy matches against that narrowed set.
+
+- Frequency boost: `+0.5 per occurrence` (capped at +5)
+- Confidence: 70-85% based on fuzzy score + frequency
+- Requires Supplier Item Catalog to be populated (from PI submissions or corrections)
+
+### Strategy: Fuzzy Match (`fuzzy_matcher.py`)
 
 Runs three algorithms against all master data names, takes the best score:
 - `fuzz.token_sort_ratio` — handles word reordering ("Steel Rod 10mm" vs "10mm Steel Rod")
@@ -410,7 +454,16 @@ For Items, also matches against `item_name` and `description` (not just the `nam
 
 Master data is cached per-doctype in `FuzzyMatcher._master_data_cache`.
 
-### Stage 4: Embedding Search (`embedding_matcher.py`)
+### Strategy: HSN-Filtered Match (`hsn_filter.py`) — Disabled by default
+
+Pre-filters candidate Items by HSN code before fuzzy matching:
+
+1. Find Items with matching `gst_hsn_code`
+2. If no exact match, try prefix match (first 4 digits)
+3. Fuzzy match within HSN-filtered candidates only
+4. Confidence boost of +5-10% over regular fuzzy matching
+
+### Strategy: Embedding Search (`embedding_matcher.py`)
 
 Searches TWO indexes sequentially:
 1. **Historical Invoice Line Index** — past line items that were human-corrected (weighted 1.1x via `human_correction_weight_boost`). Filtered by same supplier first, then broadened.
@@ -427,7 +480,7 @@ Searches TWO indexes sequentially:
 - If both indexes agree on the same item → `+agreement_confidence_boost` (default +10%)
 - If match came from human-corrected entry → `×human_correction_weight_boost` (default ×1.1)
 
-### Stage 5: LLM Match (`llm_matcher.py`)
+### Strategy: LLM Match (`llm_matcher.py`)
 
 Only invoked when Stages 1-4 all fail. Uses the configured `matching_llm_provider` (default: Anthropic/Claude).
 
@@ -443,6 +496,16 @@ Only invoked when Stages 1-4 all fail. Uses the configured `matching_llm_provide
 **Confidence capped at 88%** — LLM matches always require human review.
 
 Gated by `enable_llm_matching` setting. Provider and API key configured in Invoice Automation Settings.
+
+### Post-Match: Price Validation (`price_validator.py`)
+
+Applied automatically after any strategy produces a match for a line item:
+
+| Condition | Effect |
+|-----------|--------|
+| Rate within 15% of avg_rate in Supplier Item Catalog | +5% confidence |
+| Rate >50% off avg_rate | -10% confidence |
+| <2 historical occurrences or no catalog entry | No change |
 
 ### Confidence-Based Routing (`confidence.py`)
 
@@ -460,12 +523,14 @@ Gated by `enable_llm_matching` setting. Provider and API key configured in Invoi
 
 ### The CodeRabbit Pattern
 
-When a reviewer corrects a mapping, `process_correction()` triggers ALL of these atomically:
+#### Line Item Corrections
+
+When a reviewer corrects a line item mapping, `process_correction()` triggers ALL of these:
 
 **Step 1: Create/Update Alias** (`alias_manager.py`)
 - Build composite key: `{supplier}:{normalized_text}:{doctype}`
-- If alias exists: increment `correction_count`, update `canonical_name`
-- If new: create `Mapping Alias` record
+- If alias exists: increment `correction_count`, update `canonical_name`, set `decay_weight=1.0`, set `last_correction_date`
+- If new: create `Mapping Alias` record with `decay_weight=1.0`
 - Push to Redis immediately: `invoice_automation:alias:{composite_key}` → canonical_name
 
 **Step 2: Log the Correction** (`correction_handler.py`)
@@ -479,14 +544,31 @@ When a reviewer corrects a mapping, `process_correction()` triggers ALL of these
 - Generate embedding for the raw extracted text via sentence-transformers
 - Store embedding on the Correction Log record (`raw_text_embedding`)
 - Upsert into `Embedding Index` with `source_doctype="Historical Invoice Line"`, `is_human_corrected=1`
-- Next time similar text appears → Stage 4 embedding search catches it
 
-**Step 4: Conflict Detection** (`conflict_resolver.py`)
+**Step 4: Update Supplier Item Catalog** (`supplier_item_catalog.py`)
+- Upsert `Supplier Item Catalog` entry with corrected item, supplier, extracted rate, HSN
+- Updates rolling average rate, min/max rates, occurrence count
+
+**Step 5: Create Vendor SKU Mapping** (`vendor_sku_mapping.py`)
+- If the line item has an `extracted_item_code` (vendor's SKU), creates/updates `Vendor SKU Mapping`
+- Maps `(supplier, vendor_item_code)` → corrected Item
+
+**Step 6: Conflict Detection** (`conflict_resolver.py`)
 - Query existing corrections for same `{supplier}:{normalized_text}` but different `human_selected`
 - If new correction has `correction_count > 1` on the alias → treat as authoritative
 - If first-time conflict → flag both corrections as conflicting (`is_conflicting=1`)
 - Most recent correction always wins for the active alias
 - `resolve_stale_conflicts()` runs weekly: auto-resolves conflicts >30 days old by picking the most frequent correction
+
+#### Header Corrections
+
+When a reviewer overrides a header field (supplier, tax template, or cost center), `process_header_correction()` triggers:
+
+1. **Create/Update Alias** — same as line item corrections, with appropriate `source_doctype`
+2. **Log the Correction** — records what the system proposed vs what the reviewer chose
+3. **Conflict Detection** — same as line item corrections
+
+Header corrections are new — previously, supplier overrides were applied silently without creating aliases or logs.
 
 ### Reasoning Replay (`reasoning_retriever.py`)
 
@@ -638,7 +720,7 @@ Per-line match result, child of Invoice Processing Queue.
 
 ### Mapping Alias
 
-Learned aliases fed by human corrections. Composite key for fast lookup.
+Learned aliases fed by human corrections (line items + headers). Composite key for fast lookup.
 
 | Field | Description |
 |-------|-------------|
@@ -651,6 +733,8 @@ Learned aliases fed by human corrections. Composite key for fast lookup.
 | `created_from_correction` | Check — 1 if auto-created from review |
 | `correction_count` | How many times confirmed |
 | `last_used` | Datetime of last hit |
+| `last_correction_date` | Datetime of last correction reinforcement |
+| `decay_weight` | Float (1.0 = fresh, decays to 0.5 over 100+ days). Applied to confidence during matching. |
 | `is_active` | Check — can deactivate without deletion |
 
 ### Mapping Correction Log
@@ -682,6 +766,70 @@ Vector storage for semantic search.
 | `supplier_context` | For historical entries |
 | `is_human_corrected` | Higher-quality flag |
 | `item_group` / `hsn_code` | For search filtering |
+
+### Matching Strategy
+
+Registry of pluggable matching strategies. Loaded by the pipeline at init.
+
+| Field | Description |
+|-------|-------------|
+| `strategy_name` | Unique name (e.g., "Exact", "Vendor SKU") |
+| `strategy_class` | Dotted Python path (e.g., `invoice_automation.matching.vendor_sku_matcher.VendorSKUMatcher`) |
+| `enabled` | Check — disabled strategies are skipped |
+| `priority` | Int — lower = executed first (10=Exact, 50=LLM) |
+| `applies_to` | Supplier / Item / Both |
+| `max_confidence` | Float — confidence cap for this strategy |
+| `settings_json` | JSON — strategy-specific configuration |
+
+Seeded with 8 default strategies on install/migrate.
+
+### Supplier Item Catalog
+
+Tracks supplier-item affinity and price statistics. Populated from Purchase Invoice submissions and human corrections.
+
+| Field | Description |
+|-------|-------------|
+| `supplier` | Link: Supplier |
+| `item` | Link: Item |
+| `item_group` | Link: Item Group (denormalized) |
+| `avg_rate` | Rolling average rate |
+| `last_rate` | Most recent rate |
+| `min_rate` / `max_rate` | Rate range |
+| `occurrence_count` | Number of times this pair appeared |
+| `last_invoice_date` | Date of most recent invoice |
+| `hsn_code` | HSN/SAC code |
+
+Unique together: `supplier` + `item`. Used by Purchase History matcher and Price Validator.
+
+### Vendor SKU Mapping
+
+Maps vendor-specific item codes to ERPNext Items per supplier. Auto-created from corrections when the invoice has an item code.
+
+| Field | Description |
+|-------|-------------|
+| `supplier` | Link: Supplier |
+| `vendor_item_code` | The code as printed on the vendor's invoice |
+| `item` | Link: Item (the correct ERPNext Item) |
+| `last_seen_rate` | Most recent rate for this SKU |
+| `occurrence_count` | Number of times this mapping was confirmed |
+
+Unique together: `supplier` + `vendor_item_code`. Used by Vendor SKU matching strategy.
+
+### Extraction Field (Child Table)
+
+Custom extraction field definitions. Child of Invoice Automation Settings.
+
+| Field | Description |
+|-------|-------------|
+| `field_name` | Machine key (e.g., `project_code`) |
+| `field_label` | Human label (e.g., "Project Code") |
+| `field_type` | String / Decimal / Date / Boolean |
+| `is_line_item_field` | Check — header vs per-line-item |
+| `target_doctype` | Purchase Invoice or Purchase Invoice Item |
+| `target_field` | ERPNext field to map to |
+| `normalizer` | None / Text / Date / Currency / Decimal |
+| `description_for_llm` | Instructions for the AI on how to extract |
+| `enabled` | Check — disabled fields are ignored |
 
 ---
 
@@ -808,7 +956,21 @@ curl '...?queue_name=INV-Q-00001'
 **`GET get_review_data`** — Get extracted vs matched data for the review dialog
 ```bash
 curl '...?queue_name=INV-Q-00001'
-# Response: {header: {supplier: {extracted, matched, confidence}, ...}, line_items: [...], validation: {amount_mismatch, duplicate_flag}}
+# Response: {
+#   source_file: "/files/invoice.pdf",
+#   file_type: "PDF",
+#   overall_confidence: 82,
+#   routing_decision: "Review Queue",
+#   header: {supplier: {extracted, extracted_tax_id, matched, confidence, stage}, ...},
+#   line_items: [{
+#     line_number, extracted_description, extracted_qty, extracted_rate, extracted_amount,
+#     extracted_hsn, extracted_unit, extracted_item_code, extracted_sku,
+#     extracted_tax_rate, extracted_tax_amount, extracted_discount,
+#     matched_item, match_confidence, match_stage, is_corrected
+#   }],
+#   validation: {amount_mismatch, amount_mismatch_details, duplicate_flag, duplicate_details},
+#   extraction_warnings: [{severity, message}]
+# }
 ```
 
 **`POST confirm_mapping`** — Accept matches, apply corrections, create Draft PI
@@ -822,8 +984,23 @@ curl -X POST '...' -d '{
 }'
 # Response: {"status": "success", "purchase_invoice": "ACC-PINV-2024-00001"}
 ```
-- `header_overrides.supplier`: overrides the matched supplier
+- `header_overrides.supplier`: overrides the matched supplier + creates alias and correction log
+- `header_overrides.supplier_reasoning`: optional reasoning for the supplier override
+- `header_overrides.tax_template`: overrides the matched tax template + creates alias and correction log
+- `header_overrides.tax_template_reasoning`: optional reasoning for the tax template override
+- `header_overrides.cost_center`: overrides the matched cost center + creates alias and correction log
+- `header_overrides.cost_center_reasoning`: optional reasoning for the cost center override
 - `corrections[].reasoning`: stored in Mapping Correction Log and used as LLM context for future matching
+
+**`POST save_corrections`** — Save corrections without creating a Purchase Invoice (teaches the system)
+```bash
+curl -X POST '...' -d '{
+  "queue_name": "INV-Q-00001",
+  "corrections": [{"line_number": 1, "corrected_item": "ITEM-001", "reasoning": "Vendor abbreviation"}],
+  "header_overrides": {"supplier": "SUP-00001", "supplier_reasoning": "Correct company name"}
+}'
+# Response: {"status": "corrections_saved", "queue_name": "INV-Q-00001", "corrections_applied": 1}
+```
 
 **`POST reject_invoice`** — Reject an invoice
 ```bash
@@ -865,6 +1042,7 @@ curl '...'
 
 | Doctype | Event | Handler | Purpose |
 |---------|-------|---------|---------|
+| Purchase Invoice | on_submit | `supplier_item_catalog.update_catalog_from_purchase_invoice` | Upsert Supplier Item Catalog entries for all line items |
 | Supplier | on_update | `utils.redis_index.update_supplier_index` | Update Redis index for name, GSTIN, PAN |
 | Supplier | on_update | `matching.fuzzy_matcher.clear_master_cache` | Invalidate fuzzy matcher cache |
 | Supplier | after_insert | Same as on_update | Same |
@@ -884,14 +1062,15 @@ curl '...'
 |----------|---------|---------|
 | Daily | `utils.redis_index.rebuild_all` | Full Redis index rebuild: Suppliers, Items, and Aliases (safety net) |
 | Daily | `embeddings.index_builder.sync_missing` | Add Items not yet in embedding index |
+| Daily | `memory.alias_manager.apply_decay_weights` | Recalculate alias decay weights based on age since last correction |
 | Weekly | `memory.conflict_resolver.resolve_stale_conflicts` | Auto-resolve correction conflicts >30 days old |
 
 ### Install/Migrate Hooks
 
 | Hook | Handler | Purpose |
 |------|---------|---------|
-| `after_install` | `setup.after_install` | Build Redis indexes (Suppliers, Items, Aliases) + enqueue embedding build in background |
-| `after_migrate` | `setup.after_migrate` | Rebuild Redis indexes (Suppliers, Items, Aliases) |
+| `after_install` | `setup.after_install` | Build Redis indexes + seed default Matching Strategy records + enqueue embedding build |
+| `after_migrate` | `setup.after_migrate` | Rebuild Redis indexes + seed missing Matching Strategy records |
 
 ---
 
@@ -914,10 +1093,37 @@ class MyParserStrategy(ParserStrategy):
 2. Add to `get_parser()` factory in `parsers/base_parser.py` (before FallbackParser)
 3. Add extension mapping in `utils/file_utils.py` → `EXTENSION_TO_FILE_TYPE`
 
-### Adding a New Matching Stage
+### Adding a New Matching Strategy
 
-1. Create `matching/my_matcher.py` with `match(raw_text, source_doctype, supplier) → MatchResult`
-2. Import in `MatchingPipeline.__init__` and add to `_match_item`/`_match_supplier`
+No code changes to the pipeline needed — just create a strategy class and register it:
+
+1. Create `matching/my_matcher.py`:
+```python
+from invoice_automation.matching.exact_matcher import MatchResult
+
+class MyMatcher:
+    name = "My Strategy"
+    applies_to = ["Item"]  # or ["Supplier"] or ["Supplier", "Item"]
+
+    def __init__(self, config=None):
+        self.config = config or {}
+
+    def match_supplier(self, extracted_data):
+        return MatchResult(matched=False, doctype="Supplier", stage="My Strategy")
+
+    def match_item(self, line_item, supplier=None):
+        description = line_item.get("description", "") if isinstance(line_item, dict) else getattr(line_item, "description", "")
+        # ... your matching logic ...
+        return MatchResult(matched=True, doctype="Item", matched_name="ITEM-001",
+                          confidence=85.0, stage="My Strategy")
+```
+2. Create a **Matching Strategy** record:
+   - Strategy Name: "My Strategy"
+   - Strategy Class: `invoice_automation.matching.my_matcher.MyMatcher`
+   - Enabled: Yes
+   - Priority: 28 (between Alias and Fuzzy, for example)
+   - Applies To: Item
+   - Max Confidence: 90
 3. Add stage name to `match_stage` Select options in `invoice_line_item_match.json`
 
 ### Swapping Embedding Backend (NumPy → Qdrant)
@@ -1004,6 +1210,9 @@ bench --site {site} execute invoice_automation.embeddings.index_builder.rebuild_
 
 # Sync missing items
 bench --site {site} execute invoice_automation.embeddings.index_builder.sync_missing
+
+# Backfill Supplier Item Catalog from existing Purchase Invoices
+bench --site {site} execute invoice_automation.invoice_automation.doctype.supplier_item_catalog.supplier_item_catalog.backfill_catalog
 
 # Export corrections
 bench --site {site} execute invoice_automation.memory.correction_handler.export_corrections --args '["2024-01-01", "2024-12-31"]'

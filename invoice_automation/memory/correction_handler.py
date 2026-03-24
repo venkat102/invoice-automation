@@ -90,7 +90,38 @@ def process_correction(queue_name, line_number, corrected_item, source_doctype="
 		timeout=120,
 	)
 
-	# 4. Check for conflicts
+	# 4. Update Supplier Item Catalog (supplier-item affinity + price learning)
+	if supplier and corrected_item:
+		from invoice_automation.invoice_automation.doctype.supplier_item_catalog.supplier_item_catalog import (
+			upsert_catalog_entry,
+		)
+
+		extracted_rate = getattr(line_item, "extracted_rate", None)
+		extracted_hsn = getattr(line_item, "extracted_hsn", None)
+		invoice_date = extracted_data.get("invoice_date")
+		upsert_catalog_entry(
+			supplier=supplier,
+			item=corrected_item,
+			rate=extracted_rate,
+			hsn_code=extracted_hsn,
+			invoice_date=invoice_date,
+		)
+
+	# 5. Learn vendor SKU mapping if item code was on the invoice
+	extracted_item_code = getattr(line_item, "extracted_item_code", None)
+	if supplier and corrected_item and extracted_item_code:
+		from invoice_automation.invoice_automation.doctype.vendor_sku_mapping.vendor_sku_mapping import (
+			upsert_sku_mapping,
+		)
+
+		upsert_sku_mapping(
+			supplier=supplier,
+			vendor_item_code=extracted_item_code,
+			item=corrected_item,
+			rate=getattr(line_item, "extracted_rate", None),
+		)
+
+	# 6. Check for conflicts
 	from invoice_automation.memory.conflict_resolver import check_for_conflicts
 
 	conflict = check_for_conflicts(supplier, normalize_text(raw_text), source_doctype, corrected_item)
@@ -137,6 +168,85 @@ def _update_embedding_index(raw_text, corrected_item, supplier, correction_log_n
 		frappe.db.commit()
 	except Exception as e:
 		frappe.log_error(f"Failed to update embedding index for correction {correction_log_name}: {e}")
+
+
+def process_header_correction(queue_name, source_doctype, raw_text, corrected_value, reasoning=None):
+	"""Process a human correction on a header field (Supplier, Tax Template, Cost Center).
+
+	Creates an alias and correction log so the system learns from header overrides.
+	"""
+	if not raw_text or not corrected_value:
+		return
+
+	queue_doc = frappe.get_doc("Invoice Processing Queue", queue_name)
+
+	# Get supplier context (for non-supplier corrections, use the matched supplier)
+	supplier = None
+	if source_doctype != "Supplier":
+		supplier = queue_doc.matched_supplier
+
+	# Get the system's original proposal for this field
+	system_proposed = None
+	system_confidence = 0
+	system_stage = None
+	if queue_doc.matched_data:
+		matched_data = json.loads(queue_doc.matched_data)
+		if source_doctype == "Supplier":
+			supplier_match = matched_data.get("supplier_match", {})
+			system_proposed = supplier_match.get("matched_name")
+			system_confidence = supplier_match.get("confidence", 0)
+			system_stage = supplier_match.get("stage")
+		elif source_doctype == "Purchase Taxes and Charges Template":
+			for tm in matched_data.get("tax_matches", []):
+				if tm.get("matched_name"):
+					system_proposed = tm["matched_name"]
+					system_confidence = tm.get("confidence", 0)
+					system_stage = tm.get("stage")
+					break
+
+	# 1. Create/Update alias
+	alias_mgr = AliasManager()
+	alias_mgr.upsert_alias(
+		raw_text=raw_text,
+		canonical_name=corrected_value,
+		source_doctype=source_doctype,
+		supplier=supplier,
+		from_correction=True,
+	)
+
+	# 2. Log the correction
+	extracted_data = json.loads(queue_doc.extracted_data) if queue_doc.extracted_data else {}
+
+	correction_log = frappe.new_doc("Mapping Correction Log")
+	correction_log.source_doctype = source_doctype
+	correction_log.raw_extracted_text = raw_text
+	correction_log.system_proposed = system_proposed
+	correction_log.system_confidence = system_confidence
+	correction_log.system_match_stage = system_stage
+	correction_log.human_selected = corrected_value
+	correction_log.reviewer = frappe.session.user
+	correction_log.reviewer_reasoning = reasoning
+	correction_log.supplier = supplier if source_doctype != "Supplier" else corrected_value
+	correction_log.invoice_context = json.dumps({
+		"invoice_number": extracted_data.get("invoice_number"),
+		"invoice_date": extracted_data.get("invoice_date"),
+		"supplier_name": extracted_data.get("vendor_name"),
+		"total_amount": extracted_data.get("total_amount"),
+	})
+	correction_log.insert(ignore_permissions=True)
+
+	# 3. Check for conflicts
+	from invoice_automation.memory.conflict_resolver import check_for_conflicts
+
+	normalized = normalize_text(raw_text)
+	conflict = check_for_conflicts(supplier, normalized, source_doctype, corrected_value)
+	if conflict:
+		correction_log.is_conflicting = 1
+		correction_log.conflicting_correction = conflict.get("conflicting_log")
+		correction_log.save(ignore_permissions=True)
+
+	frappe.db.commit()
+	return correction_log.name
 
 
 def export_corrections(start_date, end_date):
