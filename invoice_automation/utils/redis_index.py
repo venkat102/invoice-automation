@@ -41,15 +41,30 @@ def _delete_lookup(doctype, normalized_value):
 
 def rebuild_all():
 	"""Clear all invoice_automation:* keys and rebuild supplier + item + alias indexes."""
-	r = _get_redis()
-	# Delete all existing keys with our prefix
-	for key in r.get_keys(f"{KEY_PREFIX}:*"):
-		r.delete_value(key)
+	update_rebuild_status("redis_index_status", "Rebuilding")
 
-	_build_supplier_index()
-	_build_item_index()
-	_build_alias_cache()
-	frappe.logger().info("invoice_automation: Redis index rebuild complete")
+	try:
+		r = _get_redis()
+		# Delete all existing keys with our prefix
+		for key in r.get_keys(f"{KEY_PREFIX}:*"):
+			r.delete_value(key)
+
+		_build_supplier_index()
+		_build_item_index()
+		_build_alias_cache()
+
+		# Count entries and stamp completion
+		entry_count = len(list(r.get_keys(f"{KEY_PREFIX}:*")))
+		update_rebuild_status(
+			"redis_index_status", "Ready",
+			last_rebuild_field="last_redis_rebuild",
+			count_field="redis_index_count",
+			count_value=entry_count,
+		)
+		frappe.logger().info(f"invoice_automation: Redis index rebuild complete ({entry_count} entries)")
+	except Exception as e:
+		update_rebuild_status("redis_index_status", "Failed")
+		frappe.log_error(f"Redis index rebuild failed: {e}", "Invoice Redis Rebuild Error")
 
 
 def _build_supplier_index():
@@ -157,13 +172,22 @@ def _build_item_index():
 		filters={"disabled": 0},
 		fields=["name", "item_name", "default_manufacturer_part_no"],
 	)
-	for item in items:
-		barcodes = frappe.get_all(
+
+	# Batch-load all barcodes in one query instead of N+1 per-item queries
+	item_names = [item.name for item in items]
+	barcodes_by_item = {}
+	if item_names:
+		all_barcodes = frappe.get_all(
 			"Item Barcode",
-			filters={"parent": item.name},
-			fields=["barcode"],
+			filters={"parent": ["in", item_names]},
+			fields=["parent", "barcode"],
 		)
-		barcode_list = [b.barcode for b in barcodes if b.barcode]
+		for b in all_barcodes:
+			if b.barcode:
+				barcodes_by_item.setdefault(b.parent, []).append(b.barcode)
+
+	for item in items:
+		barcode_list = barcodes_by_item.get(item.name, [])
 		_index_item(item.name, item.item_name, barcode_list, item.default_manufacturer_part_no)
 
 
@@ -193,3 +217,17 @@ def remove_item_index(doc, method=None):
 			_delete_lookup(doctype, normalize_text(b.barcode))
 	if doc.default_manufacturer_part_no:
 		_delete_lookup(doctype, normalize_text(doc.default_manufacturer_part_no))
+
+
+def update_rebuild_status(status_field, status_value, last_rebuild_field=None, count_field=None, count_value=None):
+	"""Update rebuild status fields on Invoice Automation Settings."""
+	try:
+		updates = {status_field: status_value}
+		if last_rebuild_field:
+			updates[last_rebuild_field] = frappe.utils.now_datetime()
+		if count_field and count_value is not None:
+			updates[count_field] = count_value
+		frappe.db.set_single_value("Invoice Automation Settings", updates, update_modified=False)
+		frappe.db.commit()
+	except Exception:
+		pass  # Don't fail the rebuild if status update fails

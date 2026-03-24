@@ -50,8 +50,18 @@ frappe.ui.form.on("Invoice Processing Queue", {
 			frm.doc.workflow_state !== "Rejected"
 		) {
 			frm.add_custom_button(__("Review & Create Invoice"), function () {
-				show_review_dialog(frm);
+				show_review_dialog(frm, "create");
 			}).addClass("btn-primary");
+		}
+
+		// Correct Mappings — available even on rejected/manual entry invoices
+		if (
+			frm.doc.matching_status === "Completed" &&
+			!frm.doc.purchase_invoice
+		) {
+			frm.add_custom_button(__("Correct Mappings"), function () {
+				show_review_dialog(frm, "correct_only");
+			}, __("Actions"));
 		}
 
 		// Reject
@@ -87,7 +97,7 @@ frappe.ui.form.on("Invoice Processing Queue", {
 });
 
 
-function show_review_dialog(frm) {
+function show_review_dialog(frm, mode) {
 	frappe.call({
 		method: "invoice_automation.api.endpoints.get_review_data",
 		args: { queue_name: frm.doc.name },
@@ -98,7 +108,7 @@ function show_review_dialog(frm) {
 				frappe.msgprint(__("Could not load review data"));
 				return;
 			}
-			render_review_dialog(frm, r.message);
+			render_review_dialog(frm, r.message, mode);
 		},
 	});
 }
@@ -112,7 +122,38 @@ function confidence_indicator(confidence) {
 }
 
 
-function render_review_dialog(frm, data) {
+function collect_corrections(data, values, header) {
+	var corrections = [];
+	if (data.line_items) {
+		data.line_items.forEach(function (li) {
+			var corrected = values["corrected_item_" + li.line_number];
+			var reasoning = values["reasoning_" + li.line_number];
+
+			if (corrected && corrected !== li.matched_item) {
+				corrections.push({
+					line_number: li.line_number,
+					corrected_item: corrected,
+					reasoning: reasoning || "",
+				});
+			}
+		});
+	}
+
+	var header_overrides = {};
+	if (values.override_supplier && values.override_supplier !== header.supplier.matched) {
+		header_overrides.supplier = values.override_supplier;
+	}
+
+	return {
+		corrections: corrections.length ? JSON.stringify(corrections) : null,
+		header_overrides: Object.keys(header_overrides).length
+			? JSON.stringify(header_overrides)
+			: null,
+	};
+}
+
+
+function render_review_dialog(frm, data, mode) {
 	var h = data.header;
 
 	// Build header review HTML
@@ -171,12 +212,23 @@ function render_review_dialog(frm, data) {
 					<td>-</td>
 				</tr>
 				${h.tax_template.matched ? '<tr><td><strong>Tax Template</strong></td><td>-</td><td>' + frappe.utils.escape_html(h.tax_template.matched) + '</td><td>-</td></tr>' : ''}
+			${h.cost_center && h.cost_center.matched ? '<tr><td><strong>Cost Center</strong></td><td>-</td><td>' + frappe.utils.escape_html(h.cost_center.matched) + '</td><td>-</td></tr>' : ''}
 			</tbody>
 		</table>
 	`;
 
-	// Validation warnings
+	// Extraction warnings
 	var warnings_html = "";
+	if (data.extraction_warnings && data.extraction_warnings.length) {
+		warnings_html += '<div class="alert alert-info" style="font-size: 13px;"><strong>Extraction Warnings:</strong><ul style="margin-bottom: 0;">';
+		data.extraction_warnings.forEach(function (w) {
+			var severity_class = w.severity === "error" ? "text-danger" : "";
+			warnings_html += '<li class="' + severity_class + '">' + frappe.utils.escape_html(w.message || w) + "</li>";
+		});
+		warnings_html += "</ul></div>";
+	}
+
+	// Validation warnings
 	if (data.validation.amount_mismatch) {
 		warnings_html += `<div class="alert alert-warning" style="font-size: 13px;">
 			<strong>Amount Mismatch:</strong> ${frappe.utils.escape_html(data.validation.amount_mismatch_details || "")}
@@ -287,70 +339,114 @@ function render_review_dialog(frm, data) {
 		});
 	}
 
+	// Dialog title and actions depend on mode
+	var is_create_mode = (mode === "create");
+	var dialog_title = is_create_mode
+		? __("Review Invoice: {0}", [frm.doc.name])
+		: __("Correct Mappings: {0}", [frm.doc.name]);
+
 	var d = new frappe.ui.Dialog({
-		title: __("Review Invoice: {0}", [frm.doc.name]),
+		title: dialog_title,
 		size: "extra-large",
 		fields: fields,
-		primary_action_label: __("Confirm & Create Invoice"),
+		primary_action_label: is_create_mode
+			? __("Confirm & Create Invoice")
+			: __("Save Corrections"),
 		primary_action: function (values) {
-			// Build corrections list from changed items
-			var corrections = [];
-			if (data.line_items) {
-				data.line_items.forEach(function (li) {
-					var corrected = values["corrected_item_" + li.line_number];
-					var reasoning = values["reasoning_" + li.line_number];
-
-					// Only include if the item was changed from the original match
-					if (corrected && corrected !== li.matched_item) {
-						corrections.push({
-							line_number: li.line_number,
-							corrected_item: corrected,
-							reasoning: reasoning || "",
-						});
-					}
-				});
-			}
-
-			// Build header overrides
-			var header_overrides = {};
-			if (values.override_supplier && values.override_supplier !== h.supplier.matched) {
-				header_overrides.supplier = values.override_supplier;
-			}
-
+			var args = collect_corrections(data, values, h);
 			d.hide();
 
-			frappe.call({
-				method: "invoice_automation.api.endpoints.confirm_mapping",
-				args: {
-					queue_name: frm.doc.name,
-					corrections: corrections.length ? JSON.stringify(corrections) : null,
-					header_overrides: Object.keys(header_overrides).length
-						? JSON.stringify(header_overrides)
-						: null,
-				},
-				freeze: true,
-				freeze_message: __("Creating Purchase Invoice..."),
-				callback: function (r) {
-					frm.reload_doc();
-					if (r.message && r.message.purchase_invoice) {
-						frappe.show_alert({
-							message: __("Purchase Invoice {0} created", [r.message.purchase_invoice]),
-							indicator: "green",
-						});
-					} else if (r.message && r.message.status === "blocked") {
-						frappe.msgprint({
-							title: __("Blocked"),
-							message: r.message.details
-								? r.message.details.details || r.message.reason
-								: r.message.reason,
-							indicator: "orange",
-						});
-					}
-				},
-			});
+			if (is_create_mode) {
+				frappe.call({
+					method: "invoice_automation.api.endpoints.confirm_mapping",
+					args: {
+						queue_name: frm.doc.name,
+						corrections: args.corrections,
+						header_overrides: args.header_overrides,
+					},
+					freeze: true,
+					freeze_message: __("Creating Purchase Invoice..."),
+					callback: function (r) {
+						frm.reload_doc();
+						if (r.message && r.message.purchase_invoice) {
+							frappe.show_alert({
+								message: __("Purchase Invoice {0} created", [r.message.purchase_invoice]),
+								indicator: "green",
+							});
+						} else if (r.message && r.message.status === "blocked") {
+							frappe.msgprint({
+								title: __("Blocked"),
+								message: r.message.details
+									? r.message.details.details || r.message.reason
+									: r.message.reason,
+								indicator: "orange",
+							});
+						}
+					},
+				});
+			} else {
+				frappe.call({
+					method: "invoice_automation.api.endpoints.save_corrections",
+					args: {
+						queue_name: frm.doc.name,
+						corrections: args.corrections,
+						header_overrides: args.header_overrides,
+					},
+					freeze: true,
+					freeze_message: __("Saving corrections..."),
+					callback: function (r) {
+						frm.reload_doc();
+						if (r.message) {
+							frappe.show_alert({
+								message: __("{0} corrections saved. The system will use these for future invoices.", [r.message.corrections_applied]),
+								indicator: "green",
+							});
+						}
+					},
+				});
+			}
 		},
 		secondary_action_label: __("Cancel"),
 	});
+
+	// In create mode, add a third button to save corrections without creating PI
+	if (is_create_mode) {
+		d.add_custom_action(
+			__("Save Corrections Only"),
+			function () {
+				var values = d.get_values();
+				var args = collect_corrections(data, values, h);
+
+				if (!args.corrections && !args.header_overrides) {
+					frappe.msgprint(__("No corrections to save."));
+					return;
+				}
+
+				d.hide();
+
+				frappe.call({
+					method: "invoice_automation.api.endpoints.save_corrections",
+					args: {
+						queue_name: frm.doc.name,
+						corrections: args.corrections,
+						header_overrides: args.header_overrides,
+					},
+					freeze: true,
+					freeze_message: __("Saving corrections..."),
+					callback: function (r) {
+						frm.reload_doc();
+						if (r.message) {
+							frappe.show_alert({
+								message: __("{0} corrections saved without creating invoice.", [r.message.corrections_applied]),
+								indicator: "blue",
+							});
+						}
+					},
+				});
+			},
+			"btn-default"
+		);
+	}
 
 	d.show();
 	d.$wrapper.find(".modal-dialog").css("max-width", "960px");

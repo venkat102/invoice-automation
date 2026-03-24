@@ -4,6 +4,7 @@
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
+ "track_changes": 1,
  "field_order": [
   "line_number",
   "extracted_description",
@@ -27,87 +28,116 @@
    "fieldname": "line_number",
    "fieldtype": "Int",
    "in_list_view": 1,
-   "label": "Line Number"
+   "label": "Line Number",
+   "read_only": 1
   },
   {
+   "description": "Item description as extracted from the invoice",
    "fieldname": "extracted_description",
    "fieldtype": "Small Text",
    "in_list_view": 1,
-   "label": "Extracted Description"
+   "label": "Extracted Description",
+   "read_only": 1
   },
   {
+   "description": "Quantity from the invoice",
    "fieldname": "extracted_qty",
    "fieldtype": "Data",
-   "label": "Extracted Qty"
+   "label": "Extracted Qty",
+   "read_only": 1
   },
   {
+   "description": "Unit price from the invoice",
    "fieldname": "extracted_rate",
    "fieldtype": "Data",
-   "label": "Extracted Rate"
+   "label": "Extracted Rate",
+   "read_only": 1
   },
   {
+   "description": "Line total from the invoice",
    "fieldname": "extracted_amount",
    "fieldtype": "Data",
-   "label": "Extracted Amount"
+   "label": "Extracted Amount",
+   "read_only": 1
   },
   {
+   "description": "HSN/SAC code from the invoice",
    "fieldname": "extracted_hsn",
    "fieldtype": "Data",
-   "label": "Extracted HSN"
+   "label": "Extracted HSN",
+   "read_only": 1
   },
   {
+   "description": "Unit of measure from the invoice",
    "fieldname": "extracted_unit",
    "fieldtype": "Data",
-   "label": "Extracted Unit"
+   "label": "Extracted Unit",
+   "read_only": 1
   },
   {
+   "description": "Vendor's item code if printed on the invoice",
    "fieldname": "extracted_item_code",
    "fieldtype": "Data",
-   "label": "Extracted Item Code"
+   "label": "Extracted Item Code",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_match",
    "fieldtype": "Column Break"
   },
   {
+   "description": "ERPNext Item matched via the 5-stage pipeline or manual correction",
    "fieldname": "matched_item",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Matched Item",
-   "options": "Item"
+   "options": "Item",
+   "read_only": 1
   },
   {
+   "description": "Confidence of the match (0-100%). Higher means more certain.",
    "fieldname": "match_confidence",
    "fieldtype": "Float",
    "in_list_view": 1,
-   "label": "Match Confidence"
+   "label": "Match Confidence",
+   "read_only": 1
   },
   {
+   "description": "Pipeline stage that produced this match",
    "fieldname": "match_stage",
    "fieldtype": "Select",
    "label": "Match Stage",
-   "options": "\nExact\nAlias\nFuzzy\nEmbedding\nLLM\nManual"
+   "options": "\nExact\nAlias\nFuzzy\nEmbedding\nLLM\nManual",
+   "read_only": 1
   },
   {
+   "description": "Detailed match metadata (candidates, scores, etc.)",
    "fieldname": "match_details",
    "fieldtype": "JSON",
-   "label": "Match Details"
+   "label": "Match Details",
+   "read_only": 1
   },
   {
+   "description": "Whether a human reviewer corrected the system's match",
    "fieldname": "is_corrected",
    "fieldtype": "Check",
-   "label": "Is Corrected"
+   "label": "Is Corrected",
+   "read_only": 1
   },
   {
+   "description": "The item the system originally proposed before correction",
    "fieldname": "original_match",
    "fieldtype": "Link",
    "label": "Original Match",
-   "options": "Item"
+   "options": "Item",
+   "read_only": 1
   },
   {
+   "description": "Reviewer's explanation for the correction. Used as context for future LLM matching.",
    "fieldname": "correction_reasoning",
    "fieldtype": "Small Text",
-   "label": "Correction Reasoning"
+   "label": "Correction Reasoning",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 0,
@@ -118,7 +148,26 @@
  "module": "Invoice Automation",
  "name": "Invoice Line Item Match",
  "owner": "Administrator",
- "permissions": [],
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Accounts Manager",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Accounts User",
+   "write": 1
+  }
+ ],
  "sort_field": "modified",
  "sort_order": "DESC"
 }

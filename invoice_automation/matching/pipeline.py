@@ -189,8 +189,11 @@ class MatchingPipeline:
 			result = match_fn(raw_text, source_doctype, supplier)
 			if result.matched:
 				return result
-		except Exception:
-			pass
+		except Exception as e:
+			frappe.log_error(
+				f"Matching stage {match_fn.__qualname__} failed for {source_doctype}: {e}",
+				"Invoice Matching Error",
+			)
 		return None
 
 	def _try_llm(self, raw_text, source_doctype, supplier) -> MatchResult | None:
@@ -208,8 +211,11 @@ class MatchingPipeline:
 			)
 			if result.matched:
 				return result
-		except Exception:
-			pass
+		except Exception as e:
+			frappe.log_error(
+				f"LLM matching failed for {source_doctype}: {e}",
+				"Invoice LLM Matching Error",
+			)
 		return None
 
 	def _get_corrections_context(self, raw_text, source_doctype, supplier) -> list[dict]:
@@ -218,5 +224,9 @@ class MatchingPipeline:
 
 			retriever = ReasoningRetriever()
 			return retriever.get_relevant_corrections(raw_text, supplier, source_doctype)
-		except Exception:
+		except Exception as e:
+			frappe.log_error(
+				f"Corrections context retrieval failed: {e}",
+				"Invoice Corrections Error",
+			)
 			return []

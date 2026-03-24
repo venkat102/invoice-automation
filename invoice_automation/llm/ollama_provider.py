@@ -36,7 +36,7 @@ class OllamaProvider(LLMProvider):
 		}
 		if system:
 			payload["system"] = system
-		return self._call_api("/api/generate", payload)
+		return self._retry_on_transient(self._call_api, "/api/generate", payload)
 
 	def generate_with_image(self, prompt: str, image_base64: str) -> str:
 		payload = {
@@ -45,7 +45,7 @@ class OllamaProvider(LLMProvider):
 			"images": [image_base64],
 			"stream": False,
 		}
-		return self._call_api("/api/generate", payload)
+		return self._retry_on_transient(self._call_api, "/api/generate", payload)
 
 	def health_check(self) -> dict:
 		try:

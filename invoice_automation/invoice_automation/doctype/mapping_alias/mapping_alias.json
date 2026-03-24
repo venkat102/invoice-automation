@@ -4,6 +4,7 @@
  "creation": "2024-01-01 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
+ "track_changes": 1,
  "field_order": [
   "source_doctype",
   "raw_text",
@@ -20,6 +21,7 @@
  ],
  "fields": [
   {
+   "description": "The ERPNext doctype this alias maps to",
    "fieldname": "source_doctype",
    "fieldtype": "Select",
    "in_list_view": 1,
@@ -28,6 +30,7 @@
    "reqd": 1
   },
   {
+   "description": "The text as it appeared on the invoice (before normalization)",
    "fieldname": "raw_text",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -35,11 +38,14 @@
    "reqd": 1
   },
   {
+   "description": "Lowercased, whitespace-normalized version of raw text. Auto-generated on save.",
    "fieldname": "normalized_text",
    "fieldtype": "Data",
-   "label": "Normalized Text"
+   "label": "Normalized Text",
+   "read_only": 1
   },
   {
+   "description": "The correct ERPNext record this text should map to",
    "fieldname": "canonical_name",
    "fieldtype": "Dynamic Link",
    "in_list_view": 1,
@@ -52,41 +58,52 @@
    "fieldtype": "Column Break"
   },
   {
+   "description": "If set, this alias only applies when matching invoices from this supplier. Leave blank for a global alias.",
    "fieldname": "supplier_context",
    "fieldtype": "Link",
    "label": "Supplier Context",
    "options": "Supplier"
   },
   {
+   "description": "Auto-generated unique key: {supplier}:{normalized_text}:{source_doctype}",
    "fieldname": "composite_key",
    "fieldtype": "Data",
    "label": "Composite Key",
+   "read_only": 1,
    "unique": 1
   },
   {
    "default": "0",
+   "description": "Whether this alias was automatically created from a human correction",
    "fieldname": "created_from_correction",
    "fieldtype": "Check",
-   "label": "Created From Correction"
+   "label": "Created From Correction",
+   "read_only": 1
   },
   {
    "default": "0",
+   "description": "Number of times this alias has been reinforced by corrections",
    "fieldname": "correction_count",
    "fieldtype": "Int",
-   "label": "Correction Count"
+   "label": "Correction Count",
+   "read_only": 1
   },
   {
+   "description": "When this alias was last used for matching",
    "fieldname": "last_used",
    "fieldtype": "Datetime",
-   "label": "Last Used"
+   "label": "Last Used",
+   "read_only": 1
   },
   {
    "default": "1",
+   "description": "Inactive aliases are ignored during matching",
    "fieldname": "is_active",
    "fieldtype": "Check",
    "label": "Is Active"
   },
   {
+   "description": "If this alias was replaced by a newer correction, link to the replacement",
    "fieldname": "superseded_by",
    "fieldtype": "Link",
    "label": "Superseded By",

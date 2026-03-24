@@ -89,7 +89,10 @@ class ExtractionService:
 			))
 		except Exception as e:
 			result.error = str(e)
-			frappe.log_error(f"Extraction failed: {e}")
+			result.warnings.append(ExtractionWarning(
+				category="unexpected_error", message=str(e), severity="error",
+			))
+			frappe.log_error(f"Extraction failed: {e}", "Invoice Extraction Error")
 
 		result.extraction_time_ms = int((time.time() - start) * 1000)
 		return result
@@ -110,8 +113,11 @@ class ExtractionService:
 			result.warnings = list(invoice.warnings)
 			result.success = True
 
+		except (ValueError, TypeError) as e:
+			result.error = f"Invalid extraction data: {e}"
 		except Exception as e:
 			result.error = str(e)
+			frappe.log_error(f"JSON extraction failed: {e}", "Invoice Extraction Error")
 
 		result.extraction_time_ms = int((time.time() - start) * 1000)
 		return result

@@ -4,6 +4,7 @@
  "creation": "2024-01-01 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
+ "track_changes": 1,
  "field_order": [
   "source_doctype",
   "raw_extracted_text",
@@ -26,56 +27,72 @@
  ],
  "fields": [
   {
+   "description": "The ERPNext doctype being corrected",
    "fieldname": "source_doctype",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Source Doctype",
-   "options": "Supplier\nItem\nPurchase Taxes and Charges Template\nCost Center"
+   "options": "Supplier\nItem\nPurchase Taxes and Charges Template\nCost Center",
+   "read_only": 1
   },
   {
+   "description": "The text from the invoice that was matched incorrectly",
    "fieldname": "raw_extracted_text",
    "fieldtype": "Small Text",
    "in_list_view": 1,
-   "label": "Raw Extracted Text"
+   "label": "Raw Extracted Text",
+   "read_only": 1
   },
   {
+   "description": "What the system originally matched this text to",
    "fieldname": "system_proposed",
    "fieldtype": "Dynamic Link",
    "label": "System Proposed",
-   "options": "source_doctype"
+   "options": "source_doctype",
+   "read_only": 1
   },
   {
+   "description": "System's confidence in its original match (0-100%)",
    "fieldname": "system_confidence",
    "fieldtype": "Float",
-   "label": "System Confidence"
+   "label": "System Confidence",
+   "read_only": 1
   },
   {
+   "description": "Pipeline stage that produced the original match",
    "fieldname": "system_match_stage",
    "fieldtype": "Select",
    "label": "System Match Stage",
-   "options": "\nExact\nAlias\nFuzzy\nEmbedding\nLLM\nManual"
+   "options": "\nExact\nAlias\nFuzzy\nEmbedding\nLLM\nManual",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_correction",
    "fieldtype": "Column Break"
   },
   {
+   "description": "The correct match chosen by the reviewer",
    "fieldname": "human_selected",
    "fieldtype": "Dynamic Link",
    "in_list_view": 1,
    "label": "Human Selected",
-   "options": "source_doctype"
+   "options": "source_doctype",
+   "read_only": 1
   },
   {
+   "description": "User who made this correction",
    "fieldname": "reviewer",
    "fieldtype": "Link",
    "label": "Reviewer",
-   "options": "User"
+   "options": "User",
+   "read_only": 1
   },
   {
+   "description": "Why the reviewer chose this correction. This reasoning is used as context for future LLM matching.",
    "fieldname": "reviewer_reasoning",
    "fieldtype": "Small Text",
-   "label": "Reviewer Reasoning"
+   "label": "Reviewer Reasoning",
+   "read_only": 1
   },
   {
    "fieldname": "section_break_context",

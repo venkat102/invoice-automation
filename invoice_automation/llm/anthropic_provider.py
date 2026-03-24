@@ -32,6 +32,9 @@ class AnthropicProvider(LLMProvider):
 		return anthropic.Anthropic(api_key=self.api_key)
 
 	def generate(self, prompt: str, system: str | None = None) -> str:
+		return self.retry_on_transient(self.do_generate, prompt, system)
+
+	def do_generate(self, prompt: str, system: str | None = None) -> str:
 		client = self._get_client()
 		kwargs = {
 			"model": self.model,
@@ -45,6 +48,9 @@ class AnthropicProvider(LLMProvider):
 		return response.content[0].text
 
 	def generate_with_image(self, prompt: str, image_base64: str) -> str:
+		return self.retry_on_transient(self.dodo_generate_with_image, prompt, image_base64)
+
+	def dodo_generate_with_image(self, prompt: str, image_base64: str) -> str:
 		client = self._get_client()
 		response = client.messages.create(
 			model=self.model,

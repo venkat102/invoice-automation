@@ -4,6 +4,7 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "issingle": 1,
+ "track_changes": 1,
  "field_order": [
   "sb_llm_providers",
   "extraction_llm_provider",
@@ -58,6 +59,14 @@
   "rebuild_embedding_index",
   "cb_index_management",
   "rebuild_all_indexes",
+  "sb_index_status",
+  "redis_index_status",
+  "last_redis_rebuild",
+  "redis_index_count",
+  "cb_index_status",
+  "embedding_index_status",
+  "last_embedding_rebuild",
+  "embedding_index_count",
   "sb_general",
   "log_level",
   "cb_general",
@@ -151,11 +160,13 @@
    "label": "Ollama Timeout (seconds)"
   },
   {
+   "depends_on": "eval:doc.extraction_llm_provider=='Ollama' || doc.extraction_llm_provider=='OpenAI' || doc.extraction_llm_provider=='Anthropic' || doc.extraction_llm_provider=='Gemini'",
    "fieldname": "sb_llamaparse",
    "fieldtype": "Section Break",
-   "label": "LlamaParse Configuration"
+   "label": "LlamaParse Configuration (Optional PDF Parser)"
   },
   {
+   "description": "Optional. If set, LlamaParse is used as the first-choice PDF parser before falling back to PyMuPDF/LLM vision.",
    "fieldname": "llamaparse_api_key",
    "fieldtype": "Password",
    "label": "LlamaParse API Key"
@@ -178,18 +189,21 @@
   },
   {
    "default": "90",
+   "description": "Minimum confidence (0-100) to auto-create a Purchase Invoice without review. Must be >= Review Threshold.",
    "fieldname": "auto_create_threshold",
    "fieldtype": "Float",
    "label": "Auto Create Threshold (%)"
   },
   {
    "default": "60",
+   "description": "Invoices with confidence between this and Auto Create route to the Review Queue. Below this goes to Manual Entry.",
    "fieldname": "review_threshold",
    "fieldtype": "Float",
    "label": "Review Threshold (%)"
   },
   {
    "default": "85",
+   "description": "Minimum fuzzy text similarity score (0-100) for Stage 3 matching to consider a match",
    "fieldname": "fuzzy_match_threshold",
    "fieldtype": "Float",
    "label": "Fuzzy Match Threshold"
@@ -200,24 +214,28 @@
   },
   {
    "default": "1",
+   "description": "Use LLM as Stage 5 fallback when earlier stages fail or have low confidence",
    "fieldname": "enable_llm_matching",
    "fieldtype": "Check",
    "label": "Enable LLM Matching"
   },
   {
    "default": "0",
+   "description": "Automatically create Draft Purchase Invoices when confidence meets auto-create threshold. Disable until the system has learned enough from corrections.",
    "fieldname": "enable_auto_create",
    "fieldtype": "Check",
    "label": "Enable Auto Create"
   },
   {
    "default": "10",
+   "description": "Maximum number of candidate items/suppliers sent to the LLM for Stage 5 matching",
    "fieldname": "llm_max_candidates",
    "fieldtype": "Int",
    "label": "LLM Max Candidates"
   },
   {
    "default": "5",
+   "description": "Maximum number of historical corrections included as context for LLM matching",
    "fieldname": "llm_max_corrections_context",
    "fieldtype": "Int",
    "label": "LLM Max Corrections Context"
@@ -229,24 +247,28 @@
   },
   {
    "default": "0.85",
+   "description": "Cosine similarity threshold (0-1) for Stage 4 embedding match to auto-accept. Values above this are high-confidence matches.",
    "fieldname": "embedding_similarity_threshold",
    "fieldtype": "Float",
    "label": "Embedding Similarity Threshold"
   },
   {
    "default": "0.65",
+   "description": "Cosine similarity threshold (0-1) below which embedding matches are discarded. Between this and similarity threshold routes to review.",
    "fieldname": "embedding_review_threshold",
    "fieldtype": "Float",
    "label": "Embedding Review Threshold"
   },
   {
    "default": "1.1",
+   "description": "Multiplier applied to similarity scores for items that were previously corrected by humans (e.g. 1.1 = 10% boost)",
    "fieldname": "human_correction_weight_boost",
    "fieldtype": "Float",
    "label": "Human Correction Weight Boost"
   },
   {
    "default": "10",
+   "description": "Percentage points added to confidence when multiple matching stages agree on the same result",
    "fieldname": "agreement_confidence_boost",
    "fieldtype": "Float",
    "label": "Agreement Confidence Boost (%)"
@@ -257,6 +279,7 @@
   },
   {
    "default": "sentence-transformers/all-MiniLM-L6-v2",
+   "description": "HuggingFace model for generating semantic embeddings. Changing this requires rebuilding the embedding index.",
    "fieldname": "embedding_model_name",
    "fieldtype": "Data",
    "label": "Embedding Model Name"
@@ -359,6 +382,59 @@
    "fieldname": "rebuild_all_indexes",
    "fieldtype": "Button",
    "label": "Rebuild All Indexes"
+  },
+  {
+   "fieldname": "sb_index_status",
+   "fieldtype": "Section Break",
+   "label": "Index Status"
+  },
+  {
+   "description": "Current status of the Redis lookup index",
+   "fieldname": "redis_index_status",
+   "fieldtype": "Select",
+   "label": "Redis Index Status",
+   "options": "\nReady\nRebuilding\nFailed",
+   "read_only": 1
+  },
+  {
+   "description": "When the Redis index was last successfully rebuilt",
+   "fieldname": "last_redis_rebuild",
+   "fieldtype": "Datetime",
+   "label": "Last Redis Rebuild",
+   "read_only": 1
+  },
+  {
+   "description": "Number of entries in the Redis lookup index",
+   "fieldname": "redis_index_count",
+   "fieldtype": "Int",
+   "label": "Redis Index Entries",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cb_index_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Current status of the embedding vector index",
+   "fieldname": "embedding_index_status",
+   "fieldtype": "Select",
+   "label": "Embedding Index Status",
+   "options": "\nReady\nRebuilding\nFailed",
+   "read_only": 1
+  },
+  {
+   "description": "When the embedding index was last successfully rebuilt",
+   "fieldname": "last_embedding_rebuild",
+   "fieldtype": "Datetime",
+   "label": "Last Embedding Rebuild",
+   "read_only": 1
+  },
+  {
+   "description": "Number of entries in the embedding vector index",
+   "fieldname": "embedding_index_count",
+   "fieldtype": "Int",
+   "label": "Embedding Index Entries",
+   "read_only": 1
   },
   {
    "fieldname": "sb_general",

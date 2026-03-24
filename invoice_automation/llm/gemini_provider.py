@@ -35,6 +35,9 @@ class GeminiProvider(LLMProvider):
 		return genai.Client(api_key=self.api_key)
 
 	def generate(self, prompt: str, system: str | None = None) -> str:
+		return self.retry_on_transient(self.do_generate, prompt, system)
+
+	def do_generate(self, prompt: str, system: str | None = None) -> str:
 		from google.genai import types
 
 		client = self._get_client()
@@ -47,6 +50,9 @@ class GeminiProvider(LLMProvider):
 		return response.text or ""
 
 	def generate_with_image(self, prompt: str, image_base64: str) -> str:
+		return self.retry_on_transient(self.dodo_generate_with_image, prompt, image_base64)
+
+	def dodo_generate_with_image(self, prompt: str, image_base64: str) -> str:
 		import base64
 
 		from google.genai import types

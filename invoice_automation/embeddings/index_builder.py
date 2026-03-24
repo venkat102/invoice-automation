@@ -7,9 +7,32 @@ import frappe
 
 def build_full_index():
 	"""Build both item master and historical invoice embeddings."""
-	rebuild_item_embeddings()
-	_build_historical_embeddings()
-	frappe.logger().info("invoice_automation: Full embedding index build complete")
+	update_embedding_status("Rebuilding")
+
+	try:
+		rebuild_item_embeddings()
+		_build_historical_embeddings()
+
+		count = frappe.db.count("Embedding Index")
+		update_embedding_status("Ready", count)
+		frappe.logger().info(f"invoice_automation: Full embedding index build complete ({count} entries)")
+	except Exception as e:
+		update_embedding_status("Failed")
+		frappe.log_error(f"Embedding index build failed: {e}", "Invoice Embedding Rebuild Error")
+
+
+def update_embedding_status(status, count=None):
+	"""Update embedding rebuild status on Invoice Automation Settings."""
+	try:
+		updates = {"embedding_index_status": status}
+		if status == "Ready":
+			updates["last_embedding_rebuild"] = frappe.utils.now_datetime()
+		if count is not None:
+			updates["embedding_index_count"] = count
+		frappe.db.set_single_value("Invoice Automation Settings", updates, update_modified=False)
+		frappe.db.commit()
+	except Exception:
+		pass
 
 
 def rebuild_item_embeddings():

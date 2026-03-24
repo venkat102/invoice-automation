@@ -6,6 +6,15 @@ import time
 import frappe
 from frappe import _
 
+INVOICE_ROLES = ("Accounts Manager", "Accounts User", "System Manager")
+ADMIN_ROLES = ("Accounts Manager", "System Manager")
+
+
+def check_roles(roles):
+	"""Verify the current user has at least one of the specified roles."""
+	if not any(role in frappe.get_roles() for role in roles):
+		frappe.throw(_("Insufficient permissions"), frappe.PermissionError)
+
 
 # ── Extraction Endpoints ──
 
@@ -18,6 +27,8 @@ def parse_invoice(file_url=None, extracted_json=None):
 	  - file_url: path to an already-uploaded Frappe file
 	  - extracted_json: pre-extracted JSON data (skips extraction)
 	"""
+	check_roles(INVOICE_ROLES)
+
 	if not file_url and not extracted_json:
 		frappe.throw(_("Either file_url or extracted_json is required"))
 
@@ -49,7 +60,12 @@ def parse_invoice(file_url=None, extracted_json=None):
 
 	if extracted_json:
 		if isinstance(extracted_json, str):
-			extracted_json = json.loads(extracted_json)
+			try:
+				extracted_json = json.loads(extracted_json)
+			except (json.JSONDecodeError, TypeError) as e:
+				frappe.throw(_("Invalid extracted_json: {0}").format(str(e)))
+		if not isinstance(extracted_json, dict):
+			frappe.throw(_("extracted_json must be a JSON object"))
 		queue_doc.extracted_data = json.dumps(extracted_json)
 		queue_doc.extraction_status = "Completed"
 		queue_doc.extraction_method = "json_direct"
@@ -71,6 +87,8 @@ def parse_invoice(file_url=None, extracted_json=None):
 @frappe.whitelist()
 def parse_invoices_batch(file_urls=None):
 	"""Parse multiple invoice files. Returns list of queued and rejected files."""
+	check_roles(INVOICE_ROLES)
+
 	if isinstance(file_urls, str):
 		file_urls = json.loads(file_urls)
 
@@ -79,10 +97,10 @@ def parse_invoices_batch(file_urls=None):
 
 	try:
 		enabled = frappe.db.get_single_value("Invoice Automation Settings", "enable_batch_parse")
-		if not enabled:
-			frappe.throw(_("Batch parsing is disabled in settings"))
 	except Exception:
-		pass
+		enabled = True  # Default to enabled if settings not configured
+	if not enabled:
+		frappe.throw(_("Batch parsing is disabled in settings"))
 
 	queued = []
 	rejected = []
@@ -100,6 +118,7 @@ def parse_invoices_batch(file_urls=None):
 @frappe.whitelist()
 def get_extraction_result(queue_name):
 	"""Returns extraction status and data for a queue record."""
+	check_roles(INVOICE_ROLES)
 	doc = frappe.get_doc("Invoice Processing Queue", queue_name)
 
 	return {
@@ -121,6 +140,7 @@ def get_extraction_result(queue_name):
 @frappe.whitelist()
 def get_review_data(queue_name):
 	"""Returns extracted vs matched data side-by-side for the review dialog."""
+	check_roles(INVOICE_ROLES)
 	doc = frappe.get_doc("Invoice Processing Queue", queue_name)
 	extracted_data = json.loads(doc.extracted_data) if doc.extracted_data else {}
 
@@ -155,6 +175,9 @@ def get_review_data(queue_name):
 		},
 		"tax_template": {
 			"matched": doc.matched_tax_template or "",
+		},
+		"cost_center": {
+			"matched": doc.matched_cost_center or "",
 		},
 	}
 
@@ -201,6 +224,14 @@ def get_review_data(queue_name):
 		"duplicate_details": doc.duplicate_details,
 	}
 
+	# Extraction warnings
+	extraction_warnings = []
+	if doc.extraction_warnings:
+		try:
+			extraction_warnings = json.loads(doc.extraction_warnings)
+		except (json.JSONDecodeError, TypeError):
+			pass
+
 	return {
 		"name": doc.name,
 		"workflow_state": doc.workflow_state,
@@ -211,6 +242,7 @@ def get_review_data(queue_name):
 		"header": header,
 		"line_items": matched_lines,
 		"validation": validation,
+		"extraction_warnings": extraction_warnings,
 	}
 
 
@@ -220,6 +252,7 @@ def get_review_data(queue_name):
 @frappe.whitelist()
 def trigger_matching(queue_name):
 	"""Manually trigger matching for an already-extracted invoice."""
+	check_roles(INVOICE_ROLES)
 	doc = frappe.get_doc("Invoice Processing Queue", queue_name)
 
 	if doc.extraction_status != "Completed":
@@ -239,6 +272,7 @@ def trigger_matching(queue_name):
 @frappe.whitelist()
 def get_match_results(queue_name):
 	"""Returns matching status and per-field confidence scores."""
+	check_roles(INVOICE_ROLES)
 	doc = frappe.get_doc("Invoice Processing Queue", queue_name)
 
 	return {
@@ -272,29 +306,47 @@ def get_match_results(queue_name):
 # ── Review & Correction Endpoints ──
 
 
-@frappe.whitelist()
-def confirm_mapping(queue_name, corrections=None, header_overrides=None):
-	"""Confirms mapping with optional corrections. Creates Purchase Invoice as Draft."""
-	from invoice_automation.memory.correction_handler import process_correction
-	from invoice_automation.validation.duplicate_detector import check_duplicate
+def apply_corrections(queue_doc, corrections=None, header_overrides=None):
+	"""Validate and apply corrections + header overrides to a queue doc.
 
-	queue_doc = frappe.get_doc("Invoice Processing Queue", queue_name)
+	Processes correction memory (aliases, logs, embeddings) so the system learns.
+	Returns the number of corrections applied.
+	"""
+	from invoice_automation.memory.correction_handler import process_correction
+
+	corrections_applied = 0
 
 	# Apply header overrides (e.g. supplier correction from review dialog)
 	if header_overrides:
 		if isinstance(header_overrides, str):
-			header_overrides = json.loads(header_overrides)
+			try:
+				header_overrides = json.loads(header_overrides)
+			except (json.JSONDecodeError, TypeError) as e:
+				frappe.throw(_("Invalid header_overrides JSON: {0}").format(str(e)))
 		if header_overrides.get("supplier"):
+			if not frappe.db.exists("Supplier", header_overrides["supplier"]):
+				frappe.throw(_("Supplier '{0}' does not exist").format(header_overrides["supplier"]))
 			queue_doc.matched_supplier = header_overrides["supplier"]
 
 	if corrections:
 		if isinstance(corrections, str):
-			corrections = json.loads(corrections)
+			try:
+				corrections = json.loads(corrections)
+			except (json.JSONDecodeError, TypeError) as e:
+				frappe.throw(_("Invalid corrections JSON: {0}").format(str(e)))
+		if not isinstance(corrections, list):
+			frappe.throw(_("corrections must be a JSON array"))
+
+		for correction in corrections:
+			if not correction.get("line_number") or not correction.get("corrected_item"):
+				frappe.throw(_("Each correction must have 'line_number' and 'corrected_item'"))
+			if not frappe.db.exists("Item", correction["corrected_item"]):
+				frappe.throw(_("Item '{0}' does not exist").format(correction["corrected_item"]))
 
 		for correction in corrections:
 			if correction.get("line_number"):
 				process_correction(
-					queue_name=queue_name,
+					queue_name=queue_doc.name,
 					line_number=correction["line_number"],
 					corrected_item=correction["corrected_item"],
 					source_doctype="Item",
@@ -309,7 +361,47 @@ def confirm_mapping(queue_name, corrections=None, header_overrides=None):
 						li.match_stage = "Manual"
 						li.match_confidence = 100
 						li.correction_reasoning = correction.get("reasoning")
+						corrections_applied += 1
 						break
+
+	return corrections_applied
+
+
+@frappe.whitelist()
+def save_corrections(queue_name, corrections=None, header_overrides=None):
+	"""Save corrections without creating a Purchase Invoice.
+
+	Teaches the system (aliases, correction logs, embeddings) so future invoices
+	benefit from the corrections. Use this when you want to correct mappings but
+	defer or skip PI creation — e.g. on rejected invoices or Manual Entry items.
+	"""
+	check_roles(INVOICE_ROLES)
+
+	queue_doc = frappe.get_doc("Invoice Processing Queue", queue_name)
+
+	corrections_applied = apply_corrections(queue_doc, corrections, header_overrides)
+
+	if corrections_applied or header_overrides:
+		queue_doc.save(ignore_permissions=True)
+		frappe.db.commit()
+
+	return {
+		"status": "corrections_saved",
+		"queue_name": queue_name,
+		"corrections_applied": corrections_applied,
+	}
+
+
+@frappe.whitelist()
+def confirm_mapping(queue_name, corrections=None, header_overrides=None):
+	"""Confirms mapping with optional corrections. Creates Purchase Invoice as Draft."""
+	check_roles(INVOICE_ROLES)
+
+	from invoice_automation.validation.duplicate_detector import check_duplicate
+
+	queue_doc = frappe.get_doc("Invoice Processing Queue", queue_name)
+
+	apply_corrections(queue_doc, corrections, header_overrides)
 
 	# Check for duplicates
 	extracted_data = json.loads(queue_doc.extracted_data) if queue_doc.extracted_data else {}
@@ -345,6 +437,7 @@ def confirm_mapping(queue_name, corrections=None, header_overrides=None):
 @frappe.whitelist()
 def reject_invoice(queue_name, reason=None):
 	"""Marks an invoice as rejected."""
+	check_roles(INVOICE_ROLES)
 	doc = frappe.get_doc("Invoice Processing Queue", queue_name)
 	doc.workflow_state = "Rejected"
 	if reason:
@@ -360,6 +453,8 @@ def reject_invoice(queue_name, reason=None):
 @frappe.whitelist()
 def rebuild_index(index_type="all"):
 	"""Triggers rebuild of Redis index, embedding index, or both."""
+	check_roles(ADMIN_ROLES)
+
 	from invoice_automation.utils.helpers import enqueue_if_scheduler_active
 	if index_type in ("redis", "all"):
 		enqueue_if_scheduler_active(
@@ -380,6 +475,7 @@ def rebuild_index(index_type="all"):
 @frappe.whitelist()
 def health_check():
 	"""Returns system health: Ollama, Redis, embedding model, index sizes."""
+	check_roles(ADMIN_ROLES)
 	health = {}
 
 	# Extraction LLM
@@ -403,12 +499,23 @@ def health_check():
 	except Exception as e:
 		health["redis"] = {"status": "error", "error": str(e)}
 
-	# Embedding index size
+	# Embedding index size and rebuild status
 	try:
 		count = frappe.db.count("Embedding Index")
-		health["embedding_index"] = {"status": "ok", "count": count}
+		settings = frappe.get_cached_doc("Invoice Automation Settings")
+		health["embedding_index"] = {
+			"status": settings.embedding_index_status or "unknown",
+			"count": count,
+			"last_rebuild": str(settings.last_embedding_rebuild) if settings.last_embedding_rebuild else None,
+		}
+		health["redis_index"] = {
+			"status": settings.redis_index_status or "unknown",
+			"count": settings.redis_index_count or 0,
+			"last_rebuild": str(settings.last_redis_rebuild) if settings.last_redis_rebuild else None,
+		}
 	except Exception:
 		health["embedding_index"] = {"status": "unknown"}
+		health["redis_index"] = {"status": "unknown"}
 
 	# Queue depths
 	try:
@@ -424,6 +531,7 @@ def health_check():
 @frappe.whitelist()
 def get_system_stats():
 	"""Returns analytics on system performance."""
+	check_roles(ADMIN_ROLES)
 	total_processed = frappe.db.count("Invoice Processing Queue", {"extraction_status": "Completed"})
 	total_corrections = frappe.db.count("Mapping Correction Log")
 	total_aliases = frappe.db.count("Mapping Alias", {"is_active": 1})
@@ -459,6 +567,7 @@ def get_system_stats():
 @frappe.whitelist()
 def get_config():
 	"""Returns current settings (non-sensitive fields)."""
+	check_roles(ADMIN_ROLES)
 	try:
 		doc = frappe.get_cached_doc("Invoice Automation Settings")
 		return {

@@ -1,13 +1,26 @@
 """Abstract base class for LLM providers."""
 
 import json
+import time
 from abc import ABC, abstractmethod
 
+import frappe
+
 from invoice_automation.utils.exceptions import LLMProviderError
+
+# Transient errors that warrant a retry
+TRANSIENT_ERRORS = (
+	TimeoutError,
+	ConnectionError,
+	OSError,
+)
 
 
 class LLMProvider(ABC):
 	"""Common interface for all LLM backends (Ollama, OpenAI, Anthropic, Gemini)."""
+
+	MAX_RETRIES = 3
+	BASE_DELAY = 1.0  # seconds
 
 	@abstractmethod
 	def generate(self, prompt: str, system: str | None = None) -> str:
@@ -16,6 +29,31 @@ class LLMProvider(ABC):
 	@abstractmethod
 	def generate_with_image(self, prompt: str, image_base64: str) -> str:
 		"""Send a prompt with a base64-encoded image and return the response text."""
+
+	def retry_on_transient(self, fn, *args, **kwargs):
+		"""Execute fn with exponential backoff retry on transient errors."""
+		last_error = None
+		for attempt in range(self.MAX_RETRIES):
+			try:
+				return fn(*args, **kwargs)
+			except TRANSIENT_ERRORS as e:
+				last_error = e
+				if attempt < self.MAX_RETRIES - 1:
+					delay = self.BASE_DELAY * (2 ** attempt)
+					frappe.log_error(
+						f"LLM transient error (attempt {attempt + 1}/{self.MAX_RETRIES}), "
+						f"retrying in {delay}s: {e}",
+						"LLM Retry",
+					)
+					time.sleep(delay)
+				else:
+					raise LLMProviderError(
+						f"LLM call failed after {self.MAX_RETRIES} retries: {last_error}"
+					) from e
+			except LLMProviderError:
+				raise
+			except Exception:
+				raise
 
 	def generate_json(self, prompt: str, system: str | None = None) -> dict:
 		"""Generate a JSON response. Retries with repair on malformed output.

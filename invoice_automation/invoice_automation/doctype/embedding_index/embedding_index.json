@@ -4,6 +4,7 @@
  "creation": "2024-01-01 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
+ "track_changes": 1,
  "field_order": [
   "source_doctype",
   "source_name",

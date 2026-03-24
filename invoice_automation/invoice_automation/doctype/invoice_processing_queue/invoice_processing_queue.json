@@ -4,6 +4,7 @@
  "creation": "2024-01-01 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
+ "track_changes": 1,
  "field_order": [
   "sb_file",
   "source_file",
@@ -69,6 +70,7 @@
    "label": "File Information"
   },
   {
+   "description": "Uploaded invoice file (PDF, image, DOCX, or DOC)",
    "fieldname": "source_file",
    "fieldtype": "Attach",
    "in_list_view": 1,
@@ -76,6 +78,7 @@
    "reqd": 1
   },
   {
+   "description": "Original file name as uploaded",
    "fieldname": "file_name",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -83,6 +86,7 @@
    "read_only": 1
   },
   {
+   "description": "SHA-256 hash for duplicate file detection",
    "fieldname": "file_hash",
    "fieldtype": "Data",
    "label": "File Hash (SHA-256)",
@@ -93,6 +97,7 @@
    "fieldtype": "Column Break"
   },
   {
+   "description": "Detected file format",
    "fieldname": "file_type",
    "fieldtype": "Select",
    "label": "File Type",
@@ -112,46 +117,60 @@
   },
   {
    "default": "Pending",
+   "description": "Current state of the extraction step",
    "fieldname": "extraction_status",
    "fieldtype": "Select",
    "label": "Extraction Status",
-   "options": "Pending\nProcessing\nCompleted\nFailed"
+   "options": "Pending\nProcessing\nCompleted\nFailed",
+   "read_only": 1
   },
   {
    "default": "Pending",
+   "description": "Current state of the matching step",
    "fieldname": "matching_status",
    "fieldtype": "Select",
    "label": "Matching Status",
-   "options": "Pending\nProcessing\nCompleted\nFailed\nSkipped"
+   "options": "Pending\nProcessing\nCompleted\nFailed\nSkipped",
+   "read_only": 1
   },
   {
    "default": "Pending",
+   "description": "Overall pipeline state from Pending through to Invoice Created or Rejected",
    "fieldname": "workflow_state",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Workflow State",
-   "options": "Pending\nExtracting\nExtracted\nMatching\nMatched\nRouted\nUnder Review\nInvoice Created\nRejected\nFailed"
+   "options": "Pending\nExtracting\nExtracted\nMatching\nMatched\nRouted\nUnder Review\nInvoice Created\nRejected\nFailed",
+   "read_only": 1
   },
   {
    "fieldname": "cb_status",
    "fieldtype": "Column Break"
   },
   {
+   "description": "How the invoice was routed based on confidence: Auto Create (>=90%), Review Queue (60-89%), or Manual Entry (<60%)",
    "fieldname": "routing_decision",
    "fieldtype": "Select",
+   "in_list_view": 1,
    "label": "Routing Decision",
-   "options": "\nAuto Create\nReview Queue\nManual Entry"
+   "options": "\nAuto Create\nReview Queue\nManual Entry",
+   "read_only": 1
   },
   {
+   "description": "Weighted confidence across supplier, line items, and tax matches (0-100%)",
    "fieldname": "overall_confidence",
    "fieldtype": "Float",
-   "label": "Overall Confidence"
+   "in_list_view": 1,
+   "label": "Overall Confidence",
+   "read_only": 1
   },
   {
+   "description": "User who confirmed/rejected this invoice",
    "fieldname": "processed_by",
    "fieldtype": "Link",
    "label": "Processed By",
-   "options": "User"
+   "options": "User",
+   "read_only": 1
   },
   {
    "fieldname": "sb_extraction",
@@ -159,18 +178,21 @@
    "label": "Extraction Details"
   },
   {
+   "description": "Parser used: LlamaParse, PyMuPDF, LLM Vision, python-docx, or json_direct",
    "fieldname": "extraction_method",
    "fieldtype": "Data",
    "label": "Extraction Method",
    "read_only": 1
   },
   {
+   "description": "Document type identified by the LLM (invoice, credit_note, debit_note, etc.)",
    "fieldname": "document_type_detected",
    "fieldtype": "Data",
    "label": "Document Type Detected",
    "read_only": 1
   },
   {
+   "description": "LLM's self-assessed extraction quality (0-100%)",
    "fieldname": "extraction_confidence",
    "fieldtype": "Float",
    "label": "Extraction Confidence",
@@ -187,6 +209,7 @@
    "fieldtype": "Column Break"
   },
   {
+   "description": "Issues detected during extraction (low text quality, ambiguous dates, etc.)",
    "fieldname": "extraction_warnings",
    "fieldtype": "JSON",
    "label": "Extraction Warnings",
@@ -199,88 +222,110 @@
    "read_only": 1
   },
   {
+   "depends_on": "eval:doc.extraction_status=='Completed'",
    "fieldname": "sb_extraction_data",
    "fieldtype": "Section Break",
    "label": "Extracted Data"
   },
   {
+   "description": "Full structured JSON output from the extraction LLM",
    "fieldname": "extracted_data",
    "fieldtype": "JSON",
-   "label": "Extracted Data"
+   "label": "Extracted Data",
+   "read_only": 1
   },
   {
+   "depends_on": "eval:doc.matching_status=='Completed'",
    "fieldname": "sb_matching_header",
    "fieldtype": "Section Break",
    "label": "Matched Header"
   },
   {
+   "description": "ERPNext Supplier matched from the extracted vendor name/tax ID",
    "fieldname": "matched_supplier",
    "fieldtype": "Link",
    "label": "Matched Supplier",
-   "options": "Supplier"
+   "options": "Supplier",
+   "read_only": 1
   },
   {
+   "description": "Confidence of the supplier match (0-100%)",
    "fieldname": "supplier_match_confidence",
    "fieldtype": "Float",
-   "label": "Supplier Match Confidence"
+   "label": "Supplier Match Confidence",
+   "read_only": 1
   },
   {
+   "description": "Pipeline stage that produced the supplier match (Exact, Alias, Fuzzy, Embedding, LLM)",
    "fieldname": "supplier_match_stage",
    "fieldtype": "Select",
    "label": "Supplier Match Stage",
-   "options": "\nExact\nAlias\nFuzzy\nEmbedding\nLLM\nManual"
+   "options": "\nExact\nAlias\nFuzzy\nEmbedding\nLLM\nManual",
+   "read_only": 1
   },
   {
    "fieldname": "cb_match_header",
    "fieldtype": "Column Break"
   },
   {
+   "description": "Invoice number from the extracted data",
    "fieldname": "matched_bill_no",
    "fieldtype": "Data",
-   "label": "Matched Bill No"
+   "label": "Matched Bill No",
+   "read_only": 1
   },
   {
    "fieldname": "matched_bill_date",
    "fieldtype": "Date",
-   "label": "Matched Bill Date"
+   "label": "Matched Bill Date",
+   "read_only": 1
   },
   {
    "fieldname": "matched_due_date",
    "fieldtype": "Date",
-   "label": "Matched Due Date"
+   "label": "Matched Due Date",
+   "read_only": 1
   },
   {
    "fieldname": "matched_currency",
    "fieldtype": "Link",
    "label": "Matched Currency",
-   "options": "Currency"
+   "options": "Currency",
+   "read_only": 1
   },
   {
    "fieldname": "matched_total",
    "fieldtype": "Currency",
-   "label": "Matched Total"
+   "label": "Matched Total",
+   "read_only": 1
   },
   {
+   "description": "Tax template matched via rule-based GST/tax type detection",
    "fieldname": "matched_tax_template",
    "fieldtype": "Link",
    "label": "Matched Tax Template",
-   "options": "Purchase Taxes and Charges Template"
+   "options": "Purchase Taxes and Charges Template",
+   "read_only": 1
   },
   {
    "fieldname": "matched_cost_center",
    "fieldtype": "Link",
    "label": "Matched Cost Center",
-   "options": "Cost Center"
+   "options": "Cost Center",
+   "read_only": 1
   },
   {
+   "depends_on": "eval:doc.matching_status=='Completed'",
    "fieldname": "sb_match_data",
    "fieldtype": "Section Break",
    "label": "Match Data"
   },
   {
+   "description": "Full JSON output from the matching pipeline",
    "fieldname": "matched_data",
    "fieldtype": "JSON",
-   "label": "Matched Data"
+   "label": "Matched Data",
+   "read_only": 1
   },
   {
    "fieldname": "cb_match_timing",
@@ -289,7 +334,8 @@
   {
    "fieldname": "matching_time_ms",
    "fieldtype": "Int",
-   "label": "Matching Time (ms)"
+   "label": "Matching Time (ms)",
+   "read_only": 1
   },
   {
    "fieldname": "sb_line_items",
@@ -308,33 +354,41 @@
    "label": "Validation"
   },
   {
+   "description": "Detailed validation check results from extraction",
    "fieldname": "validation_results",
    "fieldtype": "JSON",
-   "label": "Validation Results"
+   "label": "Validation Results",
+   "read_only": 1
   },
   {
+   "description": "Flagged if line item totals don't match the extracted total amount",
    "fieldname": "amount_mismatch",
    "fieldtype": "Check",
-   "label": "Amount Mismatch"
+   "label": "Amount Mismatch",
+   "read_only": 1
   },
   {
    "fieldname": "amount_mismatch_details",
    "fieldtype": "Small Text",
-   "label": "Amount Mismatch Details"
+   "label": "Amount Mismatch Details",
+   "read_only": 1
   },
   {
    "fieldname": "cb_duplicate",
    "fieldtype": "Column Break"
   },
   {
+   "description": "Flagged if an existing Purchase Invoice with the same supplier, bill number, and date was found",
    "fieldname": "duplicate_flag",
    "fieldtype": "Check",
-   "label": "Duplicate Flag"
+   "label": "Duplicate Flag",
+   "read_only": 1
   },
   {
    "fieldname": "duplicate_details",
    "fieldtype": "Small Text",
-   "label": "Duplicate Details"
+   "label": "Duplicate Details",
+   "read_only": 1
   },
   {
    "fieldname": "sb_output",
@@ -342,10 +396,12 @@
    "label": "Output"
   },
   {
+   "description": "Draft Purchase Invoice created from this queue record",
    "fieldname": "purchase_invoice",
    "fieldtype": "Link",
    "label": "Purchase Invoice",
-   "options": "Purchase Invoice"
+   "options": "Purchase Invoice",
+   "read_only": 1
   },
   {
    "fieldname": "cb_output",
@@ -354,7 +410,8 @@
   {
    "fieldname": "total_processing_time_ms",
    "fieldtype": "Int",
-   "label": "Total Processing Time (ms)"
+   "label": "Total Processing Time (ms)",
+   "read_only": 1
   },
   {
    "fieldname": "sb_error",
@@ -364,7 +421,8 @@
   {
    "fieldname": "processing_error",
    "fieldtype": "Small Text",
-   "label": "Processing Error"
+   "label": "Processing Error",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 0,
